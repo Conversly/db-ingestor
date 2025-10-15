@@ -12,17 +12,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// Service contains the business logic for ingestion
 type Service struct {
-	db *loaders.PostgresClient
+	db      *loaders.PostgresClient
+	workers *WorkerPool
 }
 
-// NewService creates a new ingestion service
-func NewService(db *loaders.PostgresClient) *Service {
-	return &Service{db: db}
+func NewService(db *loaders.PostgresClient, workers *WorkerPool) *Service {
+	return &Service{db: db, workers: workers}
 }
 
-// Process handles the main processing of all data sources
 func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResponse, error) {
 	utils.Zlog.Info("Processing data sources",
 		zap.String("userId", req.UserID),
@@ -32,15 +30,12 @@ func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResp
 		zap.Int("documents", len(req.Documents)),
 		zap.Int("textContent", len(req.TextContent)))
 
-	// Validate request
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Generate job ID
 	jobID := uuid.New().String()
 
-	// Create ingestion record
 	record := &IngestionRecord{
 		ID:               jobID,
 		UserID:           req.UserID,
@@ -54,16 +49,8 @@ func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResp
 		UpdatedAt:        time.Now().UTC(),
 	}
 
-	// Store initial record in database
-	if err := s.createIngestionRecord(ctx, record); err != nil {
-		utils.Zlog.Error("Failed to create ingestion record", zap.Error(err))
-		// Continue processing even if DB insert fails
-	}
+	results, totalChunks, allChunks := s.processAllSources(ctx, req, jobID)
 
-	// Process all sources
-	results, totalChunks := s.processAllSources(ctx, req, jobID)
-
-	// Calculate success/failure counts
 	successful := 0
 	failed := 0
 	for _, result := range results {
@@ -74,7 +61,6 @@ func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResp
 		}
 	}
 
-	// Update record status
 	record.ProcessedSources = successful
 	record.FailedSources = failed
 	record.TotalChunks = totalChunks
@@ -91,9 +77,23 @@ func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResp
 	record.CompletedAt = &completedAt
 	record.UpdatedAt = completedAt
 
-	// Update database record
-	if err := s.updateIngestionRecord(ctx, record); err != nil {
-		utils.Zlog.Error("Failed to update ingestion record", zap.Error(err))
+	if s.workers != nil && len(allChunks) > 0 {
+		job := EmbeddingJob{
+			JobID:     jobID,
+			UserID:    req.UserID,
+			ChatbotID: req.ChatbotID,
+			Chunks:    allChunks,
+			CreatedAt: time.Now().UTC(),
+		}
+		if ok := s.workers.Enqueue(job); !ok {
+			utils.Zlog.Warn("Embedding queue is full; dropping job",
+				zap.String("jobId", jobID),
+				zap.Int("chunks", len(allChunks)))
+		} else {
+			utils.Zlog.Info("Embedding job enqueued",
+				zap.String("jobId", jobID),
+				zap.Int("chunks", len(allChunks)))
+		}
 	}
 
 	response := &ProcessResponse{
@@ -117,94 +117,83 @@ func (s *Service) Process(ctx context.Context, req ProcessRequest) (*ProcessResp
 	return response, nil
 }
 
-// processAllSources processes all data sources and returns results
-func (s *Service) processAllSources(ctx context.Context, req ProcessRequest, jobID string) ([]SourceResult, int) {
+func (s *Service) processAllSources(ctx context.Context, req ProcessRequest, jobID string) ([]SourceResult, int, []ContentChunk) {
 	var results []SourceResult
 	var totalChunks int
+	var allChunks []ContentChunk
 	var mu sync.Mutex
 
-	// Create processor factory
 	factory := NewProcessorFactory(req.Options)
 
-	// Use wait group for concurrent processing
 	var wg sync.WaitGroup
 
-	// Process websites
 	for _, url := range req.WebsiteURLs {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			result := s.processSource(ctx, factory.CreateWebsiteProcessor(url), req.ChatbotID, req.UserID, url)
+			result, content := s.processSource(ctx, factory.CreateWebsiteProcessor(url), req.ChatbotID, req.UserID, url)
 			mu.Lock()
 			results = append(results, result)
-			totalChunks += result.ChunkCount
+			if content != nil {
+				totalChunks += len(content.Chunks)
+				allChunks = append(allChunks, s.addCitationToChunks(content)...)
+			}
 			mu.Unlock()
 		}(url)
 	}
 
-	// Process Q&A pairs
 	for _, qa := range req.QandAData {
 		wg.Add(1)
 		go func(qa QAPair) {
 			defer wg.Done()
-			result := s.processSource(ctx, factory.CreateQAProcessor(qa), req.ChatbotID, req.UserID, qa.Question)
+			result, content := s.processSource(ctx, factory.CreateQAProcessor(qa), req.ChatbotID, req.UserID, qa.Question)
 			mu.Lock()
 			results = append(results, result)
-			totalChunks += result.ChunkCount
+			if content != nil {
+				totalChunks += len(content.Chunks)
+				allChunks = append(allChunks, s.addCitationToChunks(content)...)
+			}
 			mu.Unlock()
 		}(qa)
 	}
 
-	// Process documents
 	for _, doc := range req.Documents {
-		wg.Add(1)
-		go func(doc interface{}) {
-			defer wg.Done()
-			// Type assertion needed due to multipart.FileHeader
-			if fileHeader, ok := doc.(*interface{}); ok {
-				_ = fileHeader // placeholder to avoid unused variable error in this example
-			}
-			// For now, process synchronously in the main goroutine
-			// Real implementation would properly handle the file
-		}(doc)
-	}
-
-	// Process documents (synchronously for file handling safety)
-	for _, doc := range req.Documents {
-		result := s.processSource(ctx, factory.CreateDocumentProcessor(doc), req.ChatbotID, req.UserID, doc.Filename)
+		result, content := s.processSource(ctx, factory.CreateDocumentProcessor(doc), req.ChatbotID, req.UserID, doc.Filename)
 		results = append(results, result)
-		totalChunks += result.ChunkCount
+		if content != nil {
+			totalChunks += len(content.Chunks)
+			allChunks = append(allChunks, s.addCitationToChunks(content)...)
+		}
 	}
 
-	// Process text content
 	for i, text := range req.TextContent {
 		wg.Add(1)
 		go func(text string, index int) {
 			defer wg.Done()
 			topic := fmt.Sprintf("Text content #%d", index+1)
-			result := s.processSource(ctx, factory.CreateTextProcessor(text, topic), req.ChatbotID, req.UserID, topic)
+			result, content := s.processSource(ctx, factory.CreateTextProcessor(text, topic), req.ChatbotID, req.UserID, topic)
 			mu.Lock()
 			results = append(results, result)
-			totalChunks += result.ChunkCount
+			if content != nil {
+				totalChunks += len(content.Chunks)
+				allChunks = append(allChunks, s.addCitationToChunks(content)...)
+			}
 			mu.Unlock()
 		}(text, i)
 	}
 
-	// Wait for all goroutines to complete
 	wg.Wait()
 
-	return results, totalChunks
+	return results, totalChunks, allChunks
 }
 
-// processSource processes a single data source using the appropriate processor
-func (s *Service) processSource(ctx context.Context, processor Processor, chatbotID, userID, source string) SourceResult {
+func (s *Service) processSource(ctx context.Context, processor Processor, chatbotID, userID, source string) (SourceResult, *ProcessedContent) {
 	startTime := time.Now()
 
 	utils.Zlog.Info("Processing source",
 		zap.String("source", source),
 		zap.String("type", string(processor.GetSourceType())))
 
-	// Process the source
 	content, err := processor.Process(ctx, chatbotID, userID)
 	if err != nil {
 		utils.Zlog.Error("Failed to process source",
@@ -217,29 +206,7 @@ func (s *Service) processSource(ctx context.Context, processor Processor, chatbo
 			Error:       err.Error(),
 			ChunkCount:  0,
 			ProcessedAt: time.Now().UTC(),
-		}
-	}
-
-	// TODO: Generate embeddings for each chunk
-	// For now, we'll just store the processed content
-	// In a real implementation, you would:
-	// 1. Generate embeddings using an embedding model
-	// 2. Store embeddings in a vector database
-	// 3. Store metadata in PostgreSQL
-
-	// Store processed content
-	if err := s.storeProcessedContent(ctx, chatbotID, userID, content); err != nil {
-		utils.Zlog.Error("Failed to store processed content",
-			zap.String("source", source),
-			zap.Error(err))
-		return SourceResult{
-			SourceType:  processor.GetSourceType(),
-			Source:      source,
-			Status:      "failed",
-			Error:       fmt.Sprintf("Failed to store: %v", err),
-			ChunkCount:  len(content.Chunks),
-			ProcessedAt: time.Now().UTC(),
-		}
+		}, nil
 	}
 
 	duration := time.Since(startTime)
@@ -255,32 +222,23 @@ func (s *Service) processSource(ctx context.Context, processor Processor, chatbo
 		Message:     fmt.Sprintf("Processed successfully in %v", duration),
 		ChunkCount:  len(content.Chunks),
 		ProcessedAt: time.Now().UTC(),
-	}
+	}, content
 }
 
-// storeProcessedContent stores the processed content and embeddings
 func (s *Service) storeProcessedContent(ctx context.Context, chatbotID, userID string, content *ProcessedContent) error {
-	// TODO: Implement actual storage logic
-	// This would typically involve:
-	// 1. Generating embeddings for each chunk
-	// 2. Storing embeddings in a vector database (pgvector, Pinecone, etc.)
-	// 3. Storing metadata in PostgreSQL
 
 	utils.Zlog.Info("Storing processed content",
 		zap.String("chatbotId", chatbotID),
 		zap.String("sourceType", string(content.SourceType)),
 		zap.Int("chunks", len(content.Chunks)))
 
-	// Placeholder for now
 	return nil
 }
 
-// calculateTotalSources calculates the total number of sources in the request
 func (s *Service) calculateTotalSources(req ProcessRequest) int {
 	return len(req.WebsiteURLs) + len(req.QandAData) + len(req.Documents) + len(req.TextContent)
 }
 
-// generateResponseMessage generates a human-readable response message
 func (s *Service) generateResponseMessage(successful, failed int) string {
 	if failed == 0 {
 		return fmt.Sprintf("Successfully processed all %d sources", successful)
@@ -291,95 +249,34 @@ func (s *Service) generateResponseMessage(successful, failed int) string {
 	}
 }
 
-// createIngestionRecord creates a new ingestion record in the database
-func (s *Service) createIngestionRecord(ctx context.Context, record *IngestionRecord) error {
-	// TODO: Implement actual database insertion
-	// Example:
-	// query := `
-	//     INSERT INTO ingestion_jobs (id, user_id, chatbot_id, status, total_sources,
-	//                                  processed_sources, failed_sources, total_chunks, created_at, updated_at)
-	//     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	// `
-	// _, err := s.db.GetPool().Exec(ctx, query, record.ID, record.UserID, record.ChatbotID,
-	//                                record.Status, record.TotalSources, record.ProcessedSources,
-	//                                record.FailedSources, record.TotalChunks, record.CreatedAt, record.UpdatedAt)
-	// return err
-
-	utils.Zlog.Info("Created ingestion record", zap.String("jobId", record.ID))
-	return nil
+func (s *Service) addCitationToChunks(content *ProcessedContent) []ContentChunk {
+	citation := determineCitation(content)
+	for i := range content.Chunks {
+		if content.Chunks[i].Metadata == nil {
+			content.Chunks[i].Metadata = map[string]interface{}{}
+		}
+		content.Chunks[i].Metadata["citation"] = citation
+		content.Chunks[i].Metadata["sourceType"] = string(content.SourceType)
+		content.Chunks[i].Metadata["topic"] = content.Topic
+	}
+	return content.Chunks
 }
 
-// updateIngestionRecord updates an existing ingestion record in the database
-func (s *Service) updateIngestionRecord(ctx context.Context, record *IngestionRecord) error {
-	// TODO: Implement actual database update
-	// Example:
-	// query := `
-	//     UPDATE ingestion_jobs
-	//     SET status = $1, processed_sources = $2, failed_sources = $3,
-	//         total_chunks = $4, updated_at = $5, completed_at = $6
-	//     WHERE id = $7
-	// `
-	// _, err := s.db.GetPool().Exec(ctx, query, record.Status, record.ProcessedSources,
-	//                                record.FailedSources, record.TotalChunks, record.UpdatedAt,
-	//                                record.CompletedAt, record.ID)
-	// return err
-
-	utils.Zlog.Info("Updated ingestion record", zap.String("jobId", record.ID))
-	return nil
-}
-
-// GetIngestionByID retrieves an ingestion record by ID
-func (s *Service) GetIngestionByID(ctx context.Context, id string) (*IngestionRecord, error) {
-	utils.Zlog.Info("Fetching ingestion record", zap.String("id", id))
-
-	// TODO: Implement actual database query
-	// Example:
-	// query := `SELECT * FROM ingestion_jobs WHERE id = $1`
-	// var record IngestionRecord
-	// err := s.db.GetPool().QueryRow(ctx, query, id).Scan(...)
-	// if err != nil {
-	//     return nil, fmt.Errorf("failed to fetch record: %w", err)
-	// }
-
-	// Mock response for now
-	return &IngestionRecord{
-		ID:               id,
-		UserID:           "user123",
-		ChatbotID:        "chatbot123",
-		Status:           StatusCompleted,
-		TotalSources:     5,
-		ProcessedSources: 5,
-		FailedSources:    0,
-		TotalChunks:      50,
-		CreatedAt:        time.Now().UTC(),
-		UpdatedAt:        time.Now().UTC(),
-	}, nil
-}
-
-// Chat processes a chat query and retrieves relevant context
-func (s *Service) Chat(ctx context.Context, req ChatRequest, apiKey string) (*ChatResponse, error) {
-	utils.Zlog.Info("Processing chat request",
-		zap.String("chatbotId", req.ChatbotID),
-		zap.String("question", req.Question))
-
-	// TODO: Implement actual chat logic:
-	// 1. Generate embedding for the question
-	// 2. Search vector database for similar chunks
-	// 3. Retrieve relevant context
-	// 4. Generate response using LLM
-	// 5. Return response with sources
-
-	// Mock response for now
-	return &ChatResponse{
-		Answer: "This is a placeholder response. Implement actual chat logic here.",
-		Context: []map[string]interface{}{
-			{
-				"content": "Sample context chunk 1",
-				"source":  "https://example.com",
-				"score":   0.95,
-			},
-		},
-		Sources:   []string{"https://example.com"},
-		Timestamp: time.Now().UTC(),
-	}, nil
+func determineCitation(content *ProcessedContent) string {
+	switch content.SourceType {
+	case SourceTypeWebsite:
+		if urlVal, ok := content.Metadata["url"].(string); ok && urlVal != "" {
+			return urlVal
+		}
+		return content.Topic
+	case SourceTypeQA:
+		return "QnA"
+	case SourceTypePDF, SourceTypeCSV, SourceTypeText, SourceTypeJSON:
+		if filename, ok := content.Metadata["filename"].(string); ok && filename != "" {
+			return filename
+		}
+		return content.Topic
+	default:
+		return content.Topic
+	}
 }

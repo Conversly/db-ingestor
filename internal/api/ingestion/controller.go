@@ -42,7 +42,6 @@ func (ctrl *Controller) Process(c *gin.Context) {
 	var req ProcessRequest
 	var err error
 
-	// Handle different content types
 	if contentType == "application/json" {
 		err = ctrl.parseJSONRequest(c, &req)
 	} else {
@@ -59,7 +58,6 @@ func (ctrl *Controller) Process(c *gin.Context) {
 		return
 	}
 
-	// Process the request
 	response, err := ctrl.service.Process(c.Request.Context(), req)
 	if err != nil {
 		utils.Zlog.Error("Failed to process sources", zap.Error(err))
@@ -70,11 +68,9 @@ func (ctrl *Controller) Process(c *gin.Context) {
 		})
 		return
 	}
-
 	c.JSON(http.StatusOK, response)
 }
 
-// parseJSONRequest parses a JSON request body
 func (ctrl *Controller) parseJSONRequest(c *gin.Context, req *ProcessRequest) error {
 	if err := c.ShouldBindJSON(req); err != nil {
 		return err
@@ -82,34 +78,26 @@ func (ctrl *Controller) parseJSONRequest(c *gin.Context, req *ProcessRequest) er
 	return nil
 }
 
-// parseMultipartRequest parses a multipart form data request
 func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessRequest) error {
-	// Parse form fields
 	req.UserID = c.PostForm("userId")
 	req.ChatbotID = c.PostForm("chatbotId")
 
-	// Parse website URLs
 	if websiteURLsStr := c.PostForm("websiteUrls"); websiteURLsStr != "" {
-		// Try to parse as JSON array
 		var urls []string
 		if err := json.Unmarshal([]byte(websiteURLsStr), &urls); err == nil {
 			req.WebsiteURLs = urls
 		} else {
-			// Fallback to comma-separated values
 			req.WebsiteURLs = c.PostFormArray("websiteUrls")
 		}
 	} else {
 		req.WebsiteURLs = c.PostFormArray("websiteUrls")
 	}
 
-	// Parse Q&A data
 	if qandaStr := c.PostForm("qandaData"); qandaStr != "" {
-		// Try to parse as JSON array
 		var qaPairs []QAPair
 		if err := json.Unmarshal([]byte(qandaStr), &qaPairs); err == nil {
 			req.QandAData = qaPairs
 		} else {
-			// Fallback to parsing form array
 			qandaStrings := c.PostFormArray("qandaData")
 			parsed, err := ParseFormQAData(qandaStrings)
 			if err != nil {
@@ -119,10 +107,8 @@ func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessReques
 		}
 	}
 
-	// Parse text content
 	req.TextContent = c.PostFormArray("textContent")
 
-	// Parse file uploads
 	form, err := c.MultipartForm()
 	if err == nil && form != nil {
 		if files, ok := form.File["documents"]; ok {
@@ -149,106 +135,6 @@ func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessReques
 	return nil
 }
 
-// GetIngestionStatus godoc
-// @Summary Get ingestion job status
-// @Description Get the status of an ingestion job by its ID
-// @Tags ingestion
-// @Produce json
-// @Param id path string true "Job ID"
-// @Success 200 {object} IngestionRecord
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/process/{id} [get]
-func (ctrl *Controller) GetIngestionStatus(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error:     "Bad Request",
-			Message:   "ID parameter is required",
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	record, err := ctrl.service.GetIngestionByID(c.Request.Context(), id)
-	if err != nil {
-		utils.Zlog.Error("Failed to fetch ingestion record",
-			zap.String("id", id),
-			zap.Error(err))
-		c.JSON(http.StatusNotFound, ErrorResponse{
-			Error:     "Not Found",
-			Message:   "Ingestion record not found",
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, record)
-}
-
-// Chat godoc
-// @Summary Chat with the chatbot
-// @Description Send a question to the chatbot and get an answer with context
-// @Tags chat
-// @Accept json
-// @Produce json
-// @Param X-API-Key header string true "API Key"
-// @Param request body ChatRequest true "Chat request"
-// @Success 200 {object} ChatResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 401 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/chat [post]
-func (ctrl *Controller) Chat(c *gin.Context) {
-	// Get API key from header
-	apiKey := c.GetHeader("X-API-Key")
-	if apiKey == "" {
-		c.JSON(http.StatusUnauthorized, ErrorResponse{
-			Error:     "Unauthorized",
-			Message:   "X-API-Key header is required",
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	// Parse request
-	var req ChatRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Zlog.Error("Invalid chat request", zap.Error(err))
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error:     "Bad Request",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	// Process chat request
-	response, err := ctrl.service.Chat(c.Request.Context(), req, apiKey)
-	if err != nil {
-		utils.Zlog.Error("Failed to process chat request", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error:     "Internal Server Error",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-// ProcessWebsites godoc
-// @Summary Process website URLs
-// @Description Process one or more website URLs for a chatbot
-// @Tags ingestion
-// @Accept json
-// @Produce json
-// @Param request body WebsiteProcessRequest true "Website process request"
-// @Success 200 {object} ProcessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/process/websites [post]
 func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 	var req struct {
 		UserID    string         `json:"userId" binding:"required"`
@@ -288,17 +174,6 @@ func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// ProcessQA godoc
-// @Summary Process Q&A pairs
-// @Description Process question-answer pairs for a chatbot
-// @Tags ingestion
-// @Accept json
-// @Produce json
-// @Param request body QAProcessRequest true "Q&A process request"
-// @Success 200 {object} ProcessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/process/qa [post]
 func (ctrl *Controller) ProcessQA(c *gin.Context) {
 	var req struct {
 		UserID    string   `json:"userId" binding:"required"`

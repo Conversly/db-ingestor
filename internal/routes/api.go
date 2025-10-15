@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Conversly/db-ingestor/internal/api/ingestion"
 	"github.com/Conversly/db-ingestor/internal/config"
 	"github.com/Conversly/db-ingestor/internal/controllers"
 	"github.com/Conversly/db-ingestor/internal/loaders"
@@ -20,9 +21,8 @@ func SetupAPIRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.
 		v1.GET("/info", systemController.Info)
 
 		// Feature-specific routes
-		// Register ingestion routes (example feature)
-		// ingestion.RegisterRoutes(v1, db)
-		
+		ingestion.RegisterRoutes(v1, db, cfg)
+
 		// Add more features here following the same pattern
 	}
 }

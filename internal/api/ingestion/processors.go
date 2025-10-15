@@ -270,7 +270,6 @@ func (p *TextProcessor) Process(ctx context.Context, chatbotID, userID string) (
 	}, nil
 }
 
-// createChunks splits content into chunks with overlap
 func createChunks(content string, chunkSize, overlap int) []ContentChunk {
 	var chunks []ContentChunk
 	contentLen := len(content)
@@ -279,7 +278,6 @@ func createChunks(content string, chunkSize, overlap int) []ContentChunk {
 		return chunks
 	}
 
-	// If content is smaller than chunk size, return as single chunk
 	if contentLen <= chunkSize {
 		chunks = append(chunks, ContentChunk{
 			Content:    content,
@@ -289,7 +287,6 @@ func createChunks(content string, chunkSize, overlap int) []ContentChunk {
 		return chunks
 	}
 
-	// Split into chunks with overlap
 	start := 0
 	chunkIndex := 0
 
@@ -299,9 +296,7 @@ func createChunks(content string, chunkSize, overlap int) []ContentChunk {
 			end = contentLen
 		}
 
-		// Try to break at word boundary
 		if end < contentLen {
-			// Look for last space in the chunk
 			lastSpace := strings.LastIndex(content[start:end], " ")
 			if lastSpace > 0 {
 				end = start + lastSpace
@@ -328,7 +323,6 @@ func createChunks(content string, chunkSize, overlap int) []ContentChunk {
 	return chunks
 }
 
-// ProcessorFactory creates processors based on source type
 type ProcessorFactory struct {
 	websiteConfig  *WebsiteConfig
 	documentConfig *DocumentConfig

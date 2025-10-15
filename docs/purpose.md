@@ -7,6 +7,11 @@
                      |
                      v
               +--------------+
+              |  Loader/Chunker| ( Eino loader, splitters )
+              +--------------+
+                     |
+                     v
+              +--------------+
               |  Queue/Buffer| ( current : in-memory queue/ future : kafka )
               +--------------+
                      |
@@ -19,6 +24,8 @@
         DB Write / Index / Further Processing
 
 ```
+
+workers will embedd the chunks.  they will reveice array of all the chunks of 1 api request. 
 
 Key points:
 
