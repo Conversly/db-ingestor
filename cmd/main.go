@@ -56,10 +56,8 @@ func main() {
 
 	router := gin.New()
 
-	// Setup routes (middleware is applied inside)
 	routes.SetupRoutes(router, db, cfg)
 
-	// Create HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.ServerPort,
 		Handler:      router,
@@ -68,7 +66,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine
 	go func() {
 		utils.Zlog.Info("Starting HTTP server", zap.String("addr", srv.Addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -77,14 +74,12 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	utils.Zlog.Info("Shutting down server...")
 
-	// Give outstanding requests 30 seconds to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

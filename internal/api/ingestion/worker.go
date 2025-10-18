@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Conversly/db-ingestor/internal/embedder"
 	"github.com/Conversly/db-ingestor/internal/utils"
 	"go.uber.org/zap"
 )
 
-// EmbeddingJob represents a unit of work to generate embeddings and persist them
 type EmbeddingJob struct {
 	JobID     string
 	UserID    string
@@ -18,16 +18,16 @@ type EmbeddingJob struct {
 	CreatedAt time.Time
 }
 
-// WorkerPool manages a pool of workers consuming embedding jobs
 type WorkerPool struct {
 	jobs       chan EmbeddingJob
 	quit       chan struct{}
 	started    bool
 	wg         sync.WaitGroup
 	numWorkers int
+	embedder   *embedder.GeminiEmbedder
 }
 
-func NewWorkerPool(numWorkers int, queueCapacity int) *WorkerPool {
+func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.GeminiEmbedder) *WorkerPool {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -38,6 +38,7 @@ func NewWorkerPool(numWorkers int, queueCapacity int) *WorkerPool {
 		jobs:       make(chan EmbeddingJob, queueCapacity),
 		quit:       make(chan struct{}),
 		numWorkers: numWorkers,
+		embedder:   geminiEmbedder,
 	}
 }
 
@@ -64,7 +65,6 @@ func (wp *WorkerPool) Start() {
 	}
 }
 
-// Stop gracefully stops workers, waiting for ongoing jobs to finish
 func (wp *WorkerPool) Stop(ctx context.Context) {
 	if !wp.started {
 		return
@@ -83,7 +83,6 @@ func (wp *WorkerPool) Stop(ctx context.Context) {
 	}
 }
 
-// Enqueue tries to add a job to the queue non-blockingly
 func (wp *WorkerPool) Enqueue(job EmbeddingJob) bool {
 	select {
 	case <-wp.quit:
@@ -100,14 +99,63 @@ func (wp *WorkerPool) Enqueue(job EmbeddingJob) bool {
 
 func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 	start := time.Now()
-	// TODO: Generate embeddings and persist to DB
-	// Intentionally left blank per requirements; only logging for now
 	utils.Zlog.Info("Processing embedding job",
 		zap.Int("workerId", workerID),
 		zap.String("jobId", job.JobID),
 		zap.String("chatbotId", job.ChatbotID),
 		zap.Int("chunks", len(job.Chunks)))
 
-	// Simulate quick processing path without side effects
-	_ = start
+	if wp.embedder == nil {
+		utils.Zlog.Warn("Embedder not configured, skipping embedding generation",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", job.JobID))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	successCount := 0
+	failCount := 0
+
+	for i := range job.Chunks {
+		embedding, err := wp.embedder.EmbedText(ctx, job.Chunks[i].Content)
+		utils.Zlog.Info("Embedding generated",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", job.JobID),
+			zap.Int("chunkIndex", job.Chunks[i].ChunkIndex),
+			zap.Int("embeddingLength", len(embedding)))
+		if err != nil {
+			utils.Zlog.Error("Failed to generate embedding",
+				zap.Int("workerId", workerID),
+				zap.String("jobId", job.JobID),
+				zap.Int("chunkIndex", job.Chunks[i].ChunkIndex),
+				zap.Error(err))
+			failCount++
+			continue
+		}
+
+		job.Chunks[i].Embedding = embedding
+		successCount++
+
+		if (i+1)%10 == 0 {
+			utils.Zlog.Info("Embedding progress",
+				zap.Int("workerId", workerID),
+				zap.String("jobId", job.JobID),
+				zap.Int("processed", i+1),
+				zap.Int("total", len(job.Chunks)))
+		}
+	}
+
+	duration := time.Since(start)
+	utils.Zlog.Info("Completed embedding job",
+		zap.Int("workerId", workerID),
+		zap.String("jobId", job.JobID),
+		zap.String("chatbotId", job.ChatbotID),
+		zap.Int("successful", successCount),
+		zap.Int("failed", failCount),
+		zap.Duration("duration", duration))
+
+	// TODO: Persist embeddings to database
+	// For now, embeddings are stored in memory in job.Chunks[].Embedding
 }

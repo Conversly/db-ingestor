@@ -7,19 +7,20 @@ import (
 )
 
 type Config struct {
-	DatabaseURL            string
-	LogLevel               string
-	Debug                  bool
-	ServiceName            string
-	Environment            string
-	Hostname               string
-	ServerPort             string
-	WorkerCount            int
-	BatchSize              int
-	JwtRefreshSecret       string
-	JwtSecret              string
-	Port                   string
-	AllowedOrigins         []string
+	DatabaseURL      string
+	LogLevel         string
+	Debug            bool
+	ServiceName      string
+	Environment      string
+	Hostname         string
+	ServerPort       string
+	WorkerCount      int
+	BatchSize        int
+	JwtRefreshSecret string
+	JwtSecret        string
+	Port             string
+	AllowedOrigins   []string
+	GeminiAPIKeys    []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -40,6 +41,29 @@ func LoadConfig() (*Config, error) {
 		allowedOrigins = []string{}
 		for _, origin := range os.Getenv("ALLOWED_ORIGINS") {
 			allowedOrigins = append(allowedOrigins, string(origin))
+		}
+	}
+	// Load comma-separated Gemini API keys
+	var geminiAPIKeys []string
+	if keys := os.Getenv("GEMINI_API_KEYS"); keys != "" {
+		// split by comma and trim spaces
+		current := ""
+		for _, ch := range keys {
+			if ch == ',' {
+				if current != "" {
+					geminiAPIKeys = append(geminiAPIKeys, current)
+					current = ""
+				}
+				continue
+			}
+			if ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r' {
+				// skip whitespace around commas
+				continue
+			}
+			current += string(ch)
+		}
+		if current != "" {
+			geminiAPIKeys = append(geminiAPIKeys, current)
 		}
 	}
 	databaseUrl := os.Getenv("DATABASE_URL")
@@ -92,18 +116,19 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		JwtRefreshSecret:       jwtRefreshSecret,
-		JwtSecret:              jwtSecret,
-		Port:                   port,
-		AllowedOrigins:         allowedOrigins,
-		DatabaseURL: databaseUrl,
-		LogLevel:    logLevel,
-		Debug:       debug == "true",
-		ServiceName: serviceName,
-		Hostname:    hostname,
-		Environment: environment,
-		ServerPort:  serverPort,
-		WorkerCount: workerCount,
-		BatchSize:   batchSize,
+		JwtRefreshSecret: jwtRefreshSecret,
+		JwtSecret:        jwtSecret,
+		Port:             port,
+		AllowedOrigins:   allowedOrigins,
+		DatabaseURL:      databaseUrl,
+		LogLevel:         logLevel,
+		Debug:            debug == "true",
+		ServiceName:      serviceName,
+		Hostname:         hostname,
+		Environment:      environment,
+		ServerPort:       serverPort,
+		WorkerCount:      workerCount,
+		BatchSize:        batchSize,
+		GeminiAPIKeys:    geminiAPIKeys,
 	}, nil
 }

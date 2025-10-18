@@ -11,23 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetupAPIRoutes configures API v1 routes
 func SetupAPIRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.Config) {
 	v1 := router.Group("/api/v1")
 	{
-		// System info routes
 		systemController := controllers.NewSystemController(cfg)
 		v1.GET("/status", systemController.Status)
 		v1.GET("/info", systemController.Info)
 
-		// Feature-specific routes
 		ingestion.RegisterRoutes(v1, db, cfg)
-
-		// Add more features here following the same pattern
 	}
 }
 
-// SetupRootRoutes configures root endpoints
 func SetupRootRoutes(router *gin.Engine, cfg *config.Config) {
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

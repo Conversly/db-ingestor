@@ -107,3 +107,12 @@ splitter, err := recursive.NewSplitter(ctx, &recursive.Config{
         "。",       // Period
     },
 })
+
+
+
+
+
+2.
+
+
+
