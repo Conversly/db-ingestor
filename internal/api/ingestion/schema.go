@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"mime/multipart"
 	"strings"
+
+	"github.com/Conversly/db-ingestor/internal/types"
 )
 
 type Validator interface {
 	Validate() error
 }
 
-func (r *ProcessRequest) Validate() error {
+func ValidateProcessRequest(r *types.ProcessRequest) error {
 	hasWebsites := len(r.WebsiteURLs) > 0
 	hasQA := len(r.QandAData) > 0
 	hasDocuments := len(r.Documents) > 0
@@ -28,7 +30,7 @@ func (r *ProcessRequest) Validate() error {
 
 	if hasQA {
 		for i, qa := range r.QandAData {
-			if err := qa.Validate(); err != nil {
+			if err := ValidateQAPair(&qa); err != nil {
 				return fmt.Errorf("invalid Q&A pair at index %d: %w", i, err)
 			}
 		}
@@ -43,7 +45,7 @@ func (r *ProcessRequest) Validate() error {
 	return nil
 }
 
-func (q *QAPair) Validate() error {
+func ValidateQAPair(q *types.QAPair) error {
 	if strings.TrimSpace(q.Question) == "" {
 		return fmt.Errorf("question cannot be empty")
 	}
@@ -104,25 +106,25 @@ func getFileExtension(filename string) string {
 	return "." + strings.ToLower(parts[len(parts)-1])
 }
 
-func DetermineSourceType(filename string) SourceType {
+func DetermineSourceType(filename string) types.SourceType {
 	ext := getFileExtension(filename)
 
 	switch ext {
 	case ".pdf":
-		return SourceTypePDF
+		return types.SourceTypePDF
 	case ".txt":
-		return SourceTypeText
+		return types.SourceTypeText
 	case ".csv":
-		return SourceTypeCSV
+		return types.SourceTypeCSV
 	case ".json":
-		return SourceTypeJSON
+		return types.SourceTypeJSON
 	default:
-		return SourceTypeText
+		return types.SourceTypeText
 	}
 }
 
-func GetFileInfo(file *multipart.FileHeader) FileInfo {
-	return FileInfo{
+func GetFileInfo(file *multipart.FileHeader) types.FileInfo {
+	return types.FileInfo{
 		Filename:    file.Filename,
 		Size:        file.Size,
 		ContentType: file.Header.Get("Content-Type"),
@@ -130,8 +132,8 @@ func GetFileInfo(file *multipart.FileHeader) FileInfo {
 	}
 }
 
-func ParseFormQAData(qandaStrings []string) ([]QAPair, error) {
-	var qaPairs []QAPair
+func ParseFormQAData(qandaStrings []string) ([]types.QAPair, error) {
+	var qaPairs []types.QAPair
 
 	for i, qaStr := range qandaStrings {
 		qaStr = strings.TrimSpace(qaStr)
@@ -144,12 +146,12 @@ func ParseFormQAData(qandaStrings []string) ([]QAPair, error) {
 			return nil, fmt.Errorf("invalid Q&A format at index %d: expected 'question:answer' format", i)
 		}
 
-		qa := QAPair{
+		qa := types.QAPair{
 			Question: strings.TrimSpace(parts[0]),
 			Answer:   strings.TrimSpace(parts[1]),
 		}
 
-		if err := qa.Validate(); err != nil {
+		if err := ValidateQAPair(&qa); err != nil {
 			return nil, fmt.Errorf("invalid Q&A at index %d: %w", i, err)
 		}
 

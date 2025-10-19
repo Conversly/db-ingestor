@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,9 +42,10 @@ type Embedding struct {
 
 // GeminiEmbedder handles embedding generation with rotating API keys
 type GeminiEmbedder struct {
-	apiKeys []string
-	client  *http.Client
-	baseURL string
+	apiKeys  []string
+	client   *http.Client
+	baseURL  string
+	keyIndex uint64 // atomic counter for round-robin key selection
 }
 
 // NewGeminiEmbedder creates a new embedder with API keys
@@ -53,18 +54,24 @@ func NewGeminiEmbedder(keys []string) (*GeminiEmbedder, error) {
 		return nil, fmt.Errorf("at least one API key is required")
 	}
 	return &GeminiEmbedder{
-		apiKeys: keys,
-		client:  &http.Client{Timeout: 30 * time.Second},
-		baseURL: "https://generativelanguage.googleapis.com/v1beta/models",
+		apiKeys:  keys,
+		client:   &http.Client{Timeout: 30 * time.Second},
+		baseURL:  "https://generativelanguage.googleapis.com/v1beta/models",
+		keyIndex: 0,
 	}, nil
 }
 
-// getRandomKey returns a random API key from the pool
-func (g *GeminiEmbedder) getRandomKey() string {
+// getNextKey returns the next API key using round-robin selection
+// Thread-safe: uses atomic operations to ensure fair distribution across goroutines
+func (g *GeminiEmbedder) getNextKey() string {
 	if len(g.apiKeys) == 1 {
 		return g.apiKeys[0]
 	}
-	return g.apiKeys[rand.Intn(len(g.apiKeys))]
+	// Atomically increment and get the next index
+	// This ensures thread-safe round-robin across all concurrent requests
+	idx := atomic.AddUint64(&g.keyIndex, 1)
+	// Use modulo to wrap around when we exceed the number of keys
+	return g.apiKeys[idx%uint64(len(g.apiKeys))]
 }
 
 // normalize normalizes a vector to unit length
@@ -111,7 +118,8 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	apiKey := g.getRandomKey()
+	// Get next API key using round-robin strategy
+	apiKey := g.getNextKey()
 	url := fmt.Sprintf("%s/text-embedding-004:embedContent?key=%s", g.baseURL, apiKey)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
@@ -150,10 +158,6 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 	return normalized, nil
 }
 
-// EmbedBatch embeds multiple texts in parallel (with context for cancellation)
-// NOTE: This makes individual API calls for each text (not using Gemini's batch API)
-// It's suitable for free tier but will be slower than batch API for large volumes
-// Uses the same RETRIEVAL_DOCUMENT task type and 768 dimensions as EmbedText
 func (g *GeminiEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("no texts provided")

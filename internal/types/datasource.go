@@ -1,4 +1,4 @@
-package ingestion
+package types
 
 import (
 	"mime/multipart"
@@ -30,22 +30,6 @@ type QAPair struct {
 	Question string                 `json:"question" binding:"required"`
 	Answer   string                 `json:"answer" binding:"required"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
-}
-
-type ContentChunk struct {
-	Content    string                 `json:"content"`
-	Embedding  []float64              `json:"embedding,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	ChunkIndex int                    `json:"chunkIndex"`
-}
-
-type ProcessedContent struct {
-	SourceType  SourceType             `json:"sourceType"`
-	Content     string                 `json:"content"`
-	Topic       string                 `json:"topic"`
-	Chunks      []ContentChunk         `json:"chunks"`
-	Metadata    map[string]interface{} `json:"metadata"`
-	ProcessedAt time.Time              `json:"processedAt"`
 }
 
 type SourceResult struct {

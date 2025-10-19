@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Conversly/db-ingestor/internal/types"
 	"github.com/Conversly/db-ingestor/internal/utils"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -39,7 +40,7 @@ func NewController(service *Service) *Controller {
 func (ctrl *Controller) Process(c *gin.Context) {
 	contentType := c.ContentType()
 
-	var req ProcessRequest
+	var req types.ProcessRequest
 	var err error
 
 	if contentType == "application/json" {
@@ -50,7 +51,7 @@ func (ctrl *Controller) Process(c *gin.Context) {
 
 	if err != nil {
 		utils.Zlog.Error("Invalid request", zap.Error(err))
-		c.JSON(http.StatusBadRequest, ErrorResponse{
+		c.JSON(http.StatusBadRequest, types.ErrorResponse{
 			Error:     "Bad Request",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
@@ -61,7 +62,7 @@ func (ctrl *Controller) Process(c *gin.Context) {
 	response, err := ctrl.service.Process(c.Request.Context(), req)
 	if err != nil {
 		utils.Zlog.Error("Failed to process sources", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
+		c.JSON(http.StatusInternalServerError, types.ErrorResponse{
 			Error:     "Internal Server Error",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
@@ -71,14 +72,14 @@ func (ctrl *Controller) Process(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (ctrl *Controller) parseJSONRequest(c *gin.Context, req *ProcessRequest) error {
+func (ctrl *Controller) parseJSONRequest(c *gin.Context, req *types.ProcessRequest) error {
 	if err := c.ShouldBindJSON(req); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessRequest) error {
+func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *types.ProcessRequest) error {
 	req.UserID = c.PostForm("userId")
 	req.ChatbotID = c.PostForm("chatbotId")
 
@@ -94,7 +95,7 @@ func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessReques
 	}
 
 	if qandaStr := c.PostForm("qandaData"); qandaStr != "" {
-		var qaPairs []QAPair
+		var qaPairs []types.QAPair
 		if err := json.Unmarshal([]byte(qandaStr), &qaPairs); err == nil {
 			req.QandAData = qaPairs
 		} else {
@@ -118,7 +119,7 @@ func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessReques
 
 	// Parse options if provided
 	if optionsStr := c.PostForm("options"); optionsStr != "" {
-		var options ProcessingOptions
+		var options types.ProcessingOptions
 		if err := json.Unmarshal([]byte(optionsStr), &options); err == nil {
 			req.Options = &options
 		}
@@ -137,14 +138,14 @@ func (ctrl *Controller) parseMultipartRequest(c *gin.Context, req *ProcessReques
 
 func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 	var req struct {
-		UserID    string         `json:"userId" binding:"required"`
-		ChatbotID string         `json:"chatbotId" binding:"required"`
-		URLs      []string       `json:"urls" binding:"required,min=1"`
-		Options   *WebsiteConfig `json:"options,omitempty"`
+		UserID    string                `json:"userId" binding:"required"`
+		ChatbotID string                `json:"chatbotId" binding:"required"`
+		URLs      []string              `json:"urls" binding:"required,min=1"`
+		Options   *types.WebsiteConfig  `json:"options,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
+		c.JSON(http.StatusBadRequest, types.ErrorResponse{
 			Error:     "Bad Request",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
@@ -152,18 +153,18 @@ func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 		return
 	}
 
-	processReq := ProcessRequest{
+	processReq := types.ProcessRequest{
 		UserID:      req.UserID,
 		ChatbotID:   req.ChatbotID,
 		WebsiteURLs: req.URLs,
-		Options: &ProcessingOptions{
+		Options: &types.ProcessingOptions{
 			WebsiteConfig: req.Options,
 		},
 	}
 
 	response, err := ctrl.service.Process(c.Request.Context(), processReq)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
+		c.JSON(http.StatusInternalServerError, types.ErrorResponse{
 			Error:     "Internal Server Error",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
@@ -176,13 +177,13 @@ func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 
 func (ctrl *Controller) ProcessQA(c *gin.Context) {
 	var req struct {
-		UserID    string   `json:"userId" binding:"required"`
-		ChatbotID string   `json:"chatbotId" binding:"required"`
-		QAPairs   []QAPair `json:"qaPairs" binding:"required,min=1"`
+		UserID    string          `json:"userId" binding:"required"`
+		ChatbotID string          `json:"chatbotId" binding:"required"`
+		QAPairs   []types.QAPair  `json:"qaPairs" binding:"required,min=1"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
+		c.JSON(http.StatusBadRequest, types.ErrorResponse{
 			Error:     "Bad Request",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
@@ -190,7 +191,7 @@ func (ctrl *Controller) ProcessQA(c *gin.Context) {
 		return
 	}
 
-	processReq := ProcessRequest{
+	processReq := types.ProcessRequest{
 		UserID:    req.UserID,
 		ChatbotID: req.ChatbotID,
 		QandAData: req.QAPairs,
@@ -198,7 +199,7 @@ func (ctrl *Controller) ProcessQA(c *gin.Context) {
 
 	response, err := ctrl.service.Process(c.Request.Context(), processReq)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
+		c.JSON(http.StatusInternalServerError, types.ErrorResponse{
 			Error:     "Internal Server Error",
 			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),

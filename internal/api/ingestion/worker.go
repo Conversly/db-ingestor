@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Conversly/db-ingestor/internal/embedder"
+	"github.com/Conversly/db-ingestor/internal/types"
 	"github.com/Conversly/db-ingestor/internal/utils"
 	"go.uber.org/zap"
 )
@@ -14,7 +15,7 @@ type EmbeddingJob struct {
 	JobID     string
 	UserID    string
 	ChatbotID string
-	Chunks    []ContentChunk
+	Chunks    []types.ContentChunk
 	CreatedAt time.Time
 }
 
