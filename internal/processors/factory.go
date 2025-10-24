@@ -3,7 +3,6 @@ package processors
 import (
 	"github.com/Conversly/db-ingestor/internal/types"
 
-	"mime/multipart"
 	"strings"
 )
 
@@ -28,20 +27,21 @@ func (f *Factory) CreateQAProcessor(qa types.QAPair) types.Processor {
 	return NewQAProcessor(qa)
 }
 
-func (f *Factory) CreateDocumentProcessor(file *multipart.FileHeader) types.Processor {
-	filename := strings.ToLower(file.Filename)
+// CreateDocumentProcessorFromBytes creates a processor for document content from bytes
+func (f *Factory) CreateDocumentProcessorFromBytes(content []byte, filename, contentType string) types.Processor {
+	filename = strings.ToLower(filename)
 
 	switch {
-	case strings.HasSuffix(filename, ".pdf"):
-		return NewPDFProcessor(file, f.config)
-	case strings.HasSuffix(filename, ".csv"):
-		return NewCSVProcessor(file)
+	case strings.Contains(contentType, "pdf") || strings.HasSuffix(filename, ".pdf"):
+		return NewPDFProcessorFromBytes(content, filename, f.config)
+	case strings.Contains(contentType, "csv") || strings.HasSuffix(filename, ".csv"):
+		return NewCSVProcessorFromBytes(content, filename)
 	case strings.HasSuffix(filename, ".md") || strings.HasSuffix(filename, ".markdown"):
-		return NewMarkdownProcessor(file)
-	case strings.HasSuffix(filename, ".txt"):
-		return NewTextFileProcessor(file, f.config)
+		return NewMarkdownProcessorFromBytes(content, filename)
+	case strings.Contains(contentType, "text") || strings.HasSuffix(filename, ".txt"):
+		return NewTextFileProcessorFromBytes(content, filename, f.config)
 	default:
-		return NewTextFileProcessor(file, f.config)
+		return NewTextFileProcessorFromBytes(content, filename, f.config)
 	}
 }
 

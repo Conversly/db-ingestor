@@ -3,8 +3,6 @@ package processors
 import (
 	"context"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"time"
 
 	"github.com/Conversly/db-ingestor/internal/types"
@@ -19,7 +17,7 @@ type TextProcessor struct {
 	Topic    string
 	Config   *types.Config
 	FromFile bool
-	File     *multipart.FileHeader
+	Content  []byte
 }
 
 func NewTextProcessor(text, topic string, config *types.Config) *TextProcessor {
@@ -37,15 +35,15 @@ func NewTextProcessor(text, topic string, config *types.Config) *TextProcessor {
 	}
 }
 
-func NewTextFileProcessor(file *multipart.FileHeader, config *types.Config) *TextProcessor {
+func NewTextFileProcessorFromBytes(content []byte, filename string, config *types.Config) *TextProcessor {
 	if config == nil {
 		config = types.DefaultConfig()
 	}
 	return &TextProcessor{
-		Topic:    file.Filename,
+		Topic:    filename,
 		Config:   config,
 		FromFile: true,
-		File:     file,
+		Content:  content,
 	}
 }
 
@@ -62,21 +60,10 @@ func (p *TextProcessor) Process(ctx context.Context, chatbotID, userID string) (
 		zap.String("chatbotId", chatbotID))
 
 	var content string
-	var err error
 
 	if p.FromFile {
-		// Read from file
-		file, err := p.File.Open()
-		if err != nil {
-			return nil, fmt.Errorf("failed to open text file: %w", err)
-		}
-		defer file.Close()
-
-		contentBytes, err := io.ReadAll(file)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read text file: %w", err)
-		}
-		content = string(contentBytes)
+		// Read from byte content
+		content = string(p.Content)
 	} else {
 		content = p.Text
 	}
@@ -138,9 +125,9 @@ func (p *TextProcessor) Process(ctx context.Context, chatbotID, userID string) (
 	}
 
 	if p.FromFile {
-		metadata["filename"] = p.File.Filename
-		metadata["fileSize"] = p.File.Size
-		metadata["contentType"] = p.File.Header.Get("Content-Type")
+		metadata["filename"] = p.Topic
+		metadata["fileSize"] = len(p.Content)
+		metadata["contentType"] = "text/plain"
 	}
 
 	utils.Zlog.Info("Text processed successfully",

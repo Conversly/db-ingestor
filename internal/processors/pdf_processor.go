@@ -1,9 +1,9 @@
 package processors
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"mime/multipart"
 	"time"
 	"github.com/Conversly/db-ingestor/internal/types"
 	"github.com/Conversly/db-ingestor/internal/utils"
@@ -14,19 +14,19 @@ import (
 )
 
 type PDFProcessor struct {
-	File     *multipart.FileHeader
+	Content  []byte
 	Config   *types.Config
 	Filename string
 }
 
-func NewPDFProcessor(file *multipart.FileHeader, config *types.Config) *PDFProcessor {
+func NewPDFProcessorFromBytes(content []byte, filename string, config *types.Config) *PDFProcessor {
 	if config == nil {
 		config = types.DefaultConfig()
 	}
 	return &PDFProcessor{
-		File:     file,
+		Content:  content,
 		Config:   config,
-		Filename: file.Filename,
+		Filename: filename,
 	}
 }
 
@@ -39,11 +39,8 @@ func (p *PDFProcessor) Process(ctx context.Context, chatbotID, userID string) (*
 		zap.String("filename", p.Filename),
 		zap.String("chatbotId", chatbotID))
 
-	file, err := p.File.Open()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open PDF file: %w", err)
-	}
-	defer file.Close()
+	// Create a reader from the byte content
+	reader := bytes.NewReader(p.Content)
 
 	parser, err := pdf.NewPDFParser(ctx, &pdf.Config{
 		ToPages: false,
@@ -53,7 +50,7 @@ func (p *PDFProcessor) Process(ctx context.Context, chatbotID, userID string) (*
 	}
 
 	// Parse PDF
-	docs, err := parser.Parse(ctx, file,
+	docs, err := parser.Parse(ctx, reader,
 		einoParser.WithURI(p.Filename),
 		einoParser.WithExtraMeta(map[string]any{
 			"filename": p.Filename,
@@ -114,8 +111,8 @@ func (p *PDFProcessor) Process(ctx context.Context, chatbotID, userID string) (*
 		Chunks:     chunks,
 		Metadata: map[string]interface{}{
 			"filename":    p.Filename,
-			"fileSize":    p.File.Size,
-			"contentType": p.File.Header.Get("Content-Type"),
+			"fileSize":    len(p.Content),
+			"contentType": "application/pdf",
 			"chatbotId":   chatbotID,
 			"userId":      userID,
 		},

@@ -3,8 +3,6 @@ package processors
 import (
 	"context"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"time"
 	"github.com/Conversly/db-ingestor/internal/types"
 	"github.com/Conversly/db-ingestor/internal/utils"
@@ -14,14 +12,14 @@ import (
 )
 
 type MarkdownProcessor struct {
-	File     *multipart.FileHeader
+	Content  []byte
 	Filename string
 }
 
-func NewMarkdownProcessor(file *multipart.FileHeader) *MarkdownProcessor {
+func NewMarkdownProcessorFromBytes(content []byte, filename string) *MarkdownProcessor {
 	return &MarkdownProcessor{
-		File:     file,
-		Filename: file.Filename,
+		Content:  content,
+		Filename: filename,
 	}
 }
 
@@ -34,18 +32,7 @@ func (p *MarkdownProcessor) Process(ctx context.Context, chatbotID, userID strin
 		zap.String("filename", p.Filename),
 		zap.String("chatbotId", chatbotID))
 
-	file, err := p.File.Open()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open markdown file: %w", err)
-	}
-	defer file.Close()
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read markdown file: %w", err)
-	}
-
-	fullContent := string(content)
+	fullContent := string(p.Content)
 
 	// Initialize markdown header splitter
 	splitter, err := markdown.NewHeaderSplitter(ctx, &markdown.HeaderConfig{
@@ -107,7 +94,7 @@ func (p *MarkdownProcessor) Process(ctx context.Context, chatbotID, userID strin
 		Chunks:     chunks,
 		Metadata: map[string]interface{}{
 			"filename":    p.Filename,
-			"fileSize":    p.File.Size,
+			"fileSize":    len(p.Content),
 			"contentType": "text/markdown",
 			"chatbotId":   chatbotID,
 			"userId":      userID,

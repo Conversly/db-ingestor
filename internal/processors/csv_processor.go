@@ -1,10 +1,10 @@
 package processors
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
-	"mime/multipart"
 	"strings"
 	"time"
 	"github.com/Conversly/db-ingestor/internal/types"
@@ -13,14 +13,14 @@ import (
 )
 
 type CSVProcessor struct {
-	File     *multipart.FileHeader
+	Content  []byte
 	Filename string
 }
 
-func NewCSVProcessor(file *multipart.FileHeader) *CSVProcessor {
+func NewCSVProcessorFromBytes(content []byte, filename string) *CSVProcessor {
 	return &CSVProcessor{
-		File:     file,
-		Filename: file.Filename,
+		Content:  content,
+		Filename: filename,
 	}
 }
 
@@ -33,13 +33,8 @@ func (p *CSVProcessor) Process(ctx context.Context, chatbotID, userID string) (*
 		zap.String("filename", p.Filename),
 		zap.String("chatbotId", chatbotID))
 
-	file, err := p.File.Open()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open CSV file: %w", err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
+	// Create a reader from byte content
+	reader := csv.NewReader(bytes.NewReader(p.Content))
 	reader.TrimLeadingSpace = true
 
 	records, err := reader.ReadAll()
@@ -104,8 +99,8 @@ func (p *CSVProcessor) Process(ctx context.Context, chatbotID, userID string) (*
 		Chunks:     chunks,
 		Metadata: map[string]interface{}{
 			"filename":    p.Filename,
-			"fileSize":    p.File.Size,
-			"contentType": p.File.Header.Get("Content-Type"),
+			"fileSize":    len(p.Content),
+			"contentType": "text/csv",
 			"headers":     headers,
 			"rowCount":    len(dataRows),
 			"chatbotId":   chatbotID,

@@ -1,9 +1,10 @@
 package types
 
 import (
-	"mime/multipart"
 	"time"
 )
+
+// ====== ENUMS ======
 
 type SourceType string
 
@@ -26,10 +27,38 @@ const (
 	StatusPartial    ProcessStatus = "partial"
 )
 
+// ====== CORE TYPES ======
+
 type QAPair struct {
-	Question string                 `json:"question" binding:"required"`
-	Answer   string                 `json:"answer" binding:"required"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Question  string                 `json:"question" binding:"required"`
+	Answer    string                 `json:"answer" binding:"required"`
+	Citations string                 `json:"citations,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type DocumentMetadata struct {
+	URL                string `json:"url" binding:"required"`
+	DownloadURL        string `json:"downloadUrl" binding:"required"`
+	Pathname           string `json:"pathname" binding:"required"`
+	ContentType        string `json:"contentType" binding:"required"`
+	ContentDisposition string `json:"contentDisposition" binding:"required"`
+}
+
+type ProcessingOptions struct {
+	ChunkSize    int `json:"chunkSize,omitempty"`
+	ChunkOverlap int `json:"chunkOverlap,omitempty"`
+}
+
+// ====== REQUEST / RESPONSE TYPES ======
+
+type ProcessRequest struct {
+	UserID      string              `json:"userId" binding:"required"`
+	ChatbotID   string              `json:"chatbotId" binding:"required"`
+	WebsiteURLs []string            `json:"websiteUrls,omitempty"`
+	QandAData   []QAPair            `json:"qandaData,omitempty"`
+	Documents   []DocumentMetadata  `json:"documents,omitempty"`
+	TextContent []string            `json:"textContent,omitempty"`
+	Options     *ProcessingOptions  `json:"options,omitempty"`
 }
 
 type SourceResult struct {
@@ -42,27 +71,26 @@ type SourceResult struct {
 	ProcessedAt time.Time  `json:"processedAt"`
 }
 
-type WebsiteConfig struct {
-	MaxDepth        int      `json:"maxDepth,omitempty"`
-	MaxPages        int      `json:"maxPages,omitempty"`
-	IncludePatterns []string `json:"includePatterns,omitempty"`
-	ExcludePatterns []string `json:"excludePatterns,omitempty"`
-	Timeout         int      `json:"timeout,omitempty"`
+type ProcessResponse struct {
+	JobID            string         `json:"jobId"`
+	Status           ProcessStatus  `json:"status"`
+	Message          string         `json:"message"`
+	TotalSources     int            `json:"totalSources"`
+	ProcessedSources int            `json:"processedSources"`
+	FailedSources    int            `json:"failedSources"`
+	TotalChunks      int            `json:"totalChunks"`
+	Results          []SourceResult `json:"results"`
+	Timestamp        time.Time      `json:"timestamp"`
 }
 
-type DocumentConfig struct {
-	ChunkSize     int  `json:"chunkSize,omitempty"`
-	ChunkOverlap  int  `json:"chunkOverlap,omitempty"`
-	ExtractImages bool `json:"extractImages,omitempty"`
-	ExtractTables bool `json:"extractTables,omitempty"`
+type ErrorResponse struct {
+	Error     string                 `json:"error"`
+	Message   string                 `json:"message"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
-type ProcessingOptions struct {
-	WebsiteConfig    *WebsiteConfig  `json:"websiteConfig,omitempty"`
-	DocumentConfig   *DocumentConfig `json:"documentConfig,omitempty"`
-	AsyncMode        bool            `json:"asyncMode,omitempty"`
-	NotifyOnComplete string          `json:"notifyOnComplete,omitempty"`
-}
+// ====== DATABASE MODELS ======
 
 type IngestionRecord struct {
 	ID               string                 `db:"id" json:"id"`
@@ -87,46 +115,19 @@ type FileInfo struct {
 	SourceType  SourceType `json:"sourceType"`
 }
 
-type ProcessRequest struct {
-	UserID    string `json:"userId" form:"userId" binding:"required"`
-	ChatbotID string `json:"chatbotId" form:"chatbotId" binding:"required"`
+// ====== HELPERS ======
 
-	WebsiteURLs []string                `json:"websiteUrls" form:"websiteUrls"`
-	QandAData   []QAPair                `json:"qandaData"`
-	Documents   []*multipart.FileHeader `form:"documents"`
-	TextContent []string                `json:"textContent" form:"textContent"`
-
-	Options *ProcessingOptions `json:"options,omitempty"`
-}
-
-type ProcessResponse struct {
-	JobID            string         `json:"jobId"`
-	Status           ProcessStatus  `json:"status"`
-	Message          string         `json:"message"`
-	TotalSources     int            `json:"totalSources"`
-	ProcessedSources int            `json:"processedSources"`
-	FailedSources    int            `json:"failedSources"`
-	TotalChunks      int            `json:"totalChunks"`
-	Results          []SourceResult `json:"results"`
-	Timestamp        time.Time      `json:"timestamp"`
-}
-
-type ErrorResponse struct {
-	Error     string                 `json:"error"`
-	Message   string                 `json:"message"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-}
-
-type ChatRequest struct {
-	Question  string                 `json:"question" binding:"required"`
-	ChatbotID string                 `json:"chatbotId" binding:"required"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-}
-
-type ChatResponse struct {
-	Answer    string                   `json:"answer"`
-	Context   []map[string]interface{} `json:"context,omitempty"`
-	Sources   []string                 `json:"sources,omitempty"`
-	Timestamp time.Time                `json:"timestamp"`
+func DetermineSourceTypeFromContentType(contentType string) SourceType {
+	switch {
+	case contentType == "application/pdf":
+		return SourceTypePDF
+	case contentType == "text/plain":
+		return SourceTypeText
+	case contentType == "text/csv" || contentType == "application/csv":
+		return SourceTypeCSV
+	case contentType == "application/json":
+		return SourceTypeJSON
+	default:
+		return SourceTypeText
+	}
 }

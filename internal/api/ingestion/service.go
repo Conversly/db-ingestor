@@ -130,15 +130,18 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
         ChunkSize:    1000,
         ChunkOverlap: 200,
     }
-    if req.Options != nil && req.Options.DocumentConfig != nil {
-        if req.Options.DocumentConfig.ChunkSize > 0 {
-            config.ChunkSize = req.Options.DocumentConfig.ChunkSize
+    if req.Options != nil {
+        if req.Options.ChunkSize > 0 {
+            config.ChunkSize = req.Options.ChunkSize
         }
-        if req.Options.DocumentConfig.ChunkOverlap > 0 {
-            config.ChunkOverlap = req.Options.DocumentConfig.ChunkOverlap
+        if req.Options.ChunkOverlap > 0 {
+            config.ChunkOverlap = req.Options.ChunkOverlap
         }
     }
     factory := processors.NewFactory(config)
+
+    // Initialize file downloader
+    downloader := utils.NewFileDownloader()
 
     var wg sync.WaitGroup
 
@@ -172,13 +175,52 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
         }(qa)
     }
 
+    // Process documents - download first, then process
     for _, doc := range req.Documents {
-        result, content := s.processSource(ctx, factory.CreateDocumentProcessor(doc), req.ChatbotID, req.UserID, doc.Filename)
-        results = append(results, result)
-        if content != nil {
-            totalChunks += len(content.Chunks)
-            allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
-        }
+        wg.Add(1)
+        go func(doc types.DocumentMetadata) {
+            defer wg.Done()
+            
+            // Download the file
+            utils.Zlog.Info("Downloading document",
+                zap.String("url", doc.DownloadURL),
+                zap.String("pathname", doc.Pathname))
+            
+            downloadedFile, err := downloader.DownloadFile(ctx, doc.DownloadURL, doc.ContentType)
+            if err != nil {
+                utils.Zlog.Error("Failed to download document",
+                    zap.String("url", doc.DownloadURL),
+                    zap.Error(err))
+                
+                mu.Lock()
+                results = append(results, types.SourceResult{
+                    SourceType:  types.DetermineSourceTypeFromContentType(doc.ContentType),
+                    Source:      doc.Pathname,
+                    Status:      "failed",
+                    Error:       fmt.Sprintf("Failed to download: %v", err),
+                    ChunkCount:  0,
+                    ProcessedAt: time.Now().UTC(),
+                })
+                mu.Unlock()
+                return
+            }
+            
+            // Process the downloaded file
+            processor := factory.CreateDocumentProcessorFromBytes(
+                downloadedFile.Content,
+                doc.Pathname,
+                doc.ContentType,
+            )
+            
+            result, content := s.processSource(ctx, processor, req.ChatbotID, req.UserID, doc.Pathname)
+            mu.Lock()
+            results = append(results, result)
+            if content != nil {
+                totalChunks += len(content.Chunks)
+                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
+            }
+            mu.Unlock()
+        }(doc)
     }
 
     for i, text := range req.TextContent {

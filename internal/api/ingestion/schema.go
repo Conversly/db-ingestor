@@ -2,7 +2,6 @@ package ingestion
 
 import (
 	"fmt"
-	"mime/multipart"
 	"strings"
 
 	"github.com/Conversly/db-ingestor/internal/types"
@@ -37,7 +36,7 @@ func ValidateProcessRequest(r *types.ProcessRequest) error {
 	}
 
 	if hasDocuments {
-		if err := validateDocuments(r.Documents); err != nil {
+		if err := validateDocumentMetadata(r.Documents); err != nil {
 			return fmt.Errorf("invalid documents: %w", err)
 		}
 	}
@@ -68,67 +67,68 @@ func validateWebsiteURLs(urls []string) error {
 	return nil
 }
 
-func validateDocuments(files []*multipart.FileHeader) error {
-	const maxFileSize = 50 * 1024 * 1024 // 50MB
-
-	allowedExtensions := map[string]bool{
-		".pdf":  true,
-		".txt":  true,
-		".csv":  true,
-		".doc":  true,
-		".docx": true,
-		".json": true,
+func validateDocumentMetadata(docs []types.DocumentMetadata) error {
+	allowedContentTypes := map[string]bool{
+		"application/pdf":                                                      true,
+		"text/plain":                                                           true,
+		"text/csv":                                                             true,
+		"application/csv":                                                      true,
+		"application/json":                                                     true,
+		"application/msword":                                                   true,
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
 	}
 
-	for i, file := range files {
-		if file.Size > maxFileSize {
-			return fmt.Errorf("file %s exceeds maximum size of 50MB", file.Filename)
+	for i, doc := range docs {
+		// Validate URL
+		if strings.TrimSpace(doc.URL) == "" {
+			return fmt.Errorf("document at index %d has empty URL", i)
+		}
+		if !strings.HasPrefix(doc.URL, "http://") && !strings.HasPrefix(doc.URL, "https://") {
+			return fmt.Errorf("document URL at index %d must start with http:// or https://", i)
 		}
 
-		ext := getFileExtension(file.Filename)
-		if !allowedExtensions[ext] {
-			return fmt.Errorf("file %s has unsupported extension %s. Allowed: .pdf, .txt, .csv, .doc, .docx, .json", file.Filename, ext)
+		// Validate DownloadURL
+		if strings.TrimSpace(doc.DownloadURL) == "" {
+			return fmt.Errorf("document at index %d has empty download URL", i)
+		}
+		if !strings.HasPrefix(doc.DownloadURL, "http://") && !strings.HasPrefix(doc.DownloadURL, "https://") {
+			return fmt.Errorf("document download URL at index %d must start with http:// or https://", i)
 		}
 
-		if strings.TrimSpace(file.Filename) == "" {
-			return fmt.Errorf("file at index %d has empty filename", i)
+		// Validate Pathname
+		if strings.TrimSpace(doc.Pathname) == "" {
+			return fmt.Errorf("document at index %d has empty pathname", i)
+		}
+
+		// Validate ContentType
+		if strings.TrimSpace(doc.ContentType) == "" {
+			return fmt.Errorf("document at index %d has empty content type", i)
+		}
+		if !allowedContentTypes[doc.ContentType] {
+			return fmt.Errorf("document at index %d has unsupported content type: %s", i, doc.ContentType)
+		}
+
+		// ContentDisposition is required but we don't validate its format
+		if strings.TrimSpace(doc.ContentDisposition) == "" {
+			return fmt.Errorf("document at index %d has empty content disposition", i)
 		}
 	}
 
 	return nil
 }
 
-func getFileExtension(filename string) string {
-	parts := strings.Split(filename, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	return "." + strings.ToLower(parts[len(parts)-1])
-}
-
-func DetermineSourceType(filename string) types.SourceType {
-	ext := getFileExtension(filename)
-
-	switch ext {
-	case ".pdf":
+func DetermineSourceTypeFromContentType(contentType string) types.SourceType {
+	switch contentType {
+	case "application/pdf":
 		return types.SourceTypePDF
-	case ".txt":
+	case "text/plain":
 		return types.SourceTypeText
-	case ".csv":
+	case "text/csv", "application/csv":
 		return types.SourceTypeCSV
-	case ".json":
+	case "application/json":
 		return types.SourceTypeJSON
 	default:
 		return types.SourceTypeText
-	}
-}
-
-func GetFileInfo(file *multipart.FileHeader) types.FileInfo {
-	return types.FileInfo{
-		Filename:    file.Filename,
-		Size:        file.Size,
-		ContentType: file.Header.Get("Content-Type"),
-		SourceType:  DetermineSourceType(file.Filename),
 	}
 }
 
