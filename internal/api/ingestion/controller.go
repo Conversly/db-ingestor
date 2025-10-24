@@ -77,10 +77,10 @@ func (ctrl *Controller) Process(c *gin.Context) {
 
 func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
 	var req struct {
-		UserID    string                    `json:"userId" binding:"required"`
-		ChatbotID string                    `json:"chatbotId" binding:"required"`
-		URLs      []string                  `json:"urls" binding:"required,min=1"`
-		Options   *types.ProcessingOptions  `json:"options,omitempty"`
+		UserID    string                   `json:"userId" binding:"required"`
+		ChatbotID string                   `json:"chatbotId" binding:"required"`
+		URLs      []types.WebsiteURL       `json:"urls" binding:"required,min=1"`
+		Options   *types.ProcessingOptions `json:"options,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {

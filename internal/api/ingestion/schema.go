@@ -45,6 +45,9 @@ func ValidateProcessRequest(r *types.ProcessRequest) error {
 }
 
 func ValidateQAPair(q *types.QAPair) error {
+	if q.DatasourceID <= 0 {
+		return fmt.Errorf("datasource ID must be positive")
+	}
 	if strings.TrimSpace(q.Question) == "" {
 		return fmt.Errorf("question cannot be empty")
 	}
@@ -54,9 +57,12 @@ func ValidateQAPair(q *types.QAPair) error {
 	return nil
 }
 
-func validateWebsiteURLs(urls []string) error {
-	for i, url := range urls {
-		url = strings.TrimSpace(url)
+func validateWebsiteURLs(urls []types.WebsiteURL) error {
+	for i, websiteURL := range urls {
+		if websiteURL.DatasourceID <= 0 {
+			return fmt.Errorf("datasource ID at index %d must be positive", i)
+		}
+		url := strings.TrimSpace(websiteURL.URL)
 		if url == "" {
 			return fmt.Errorf("URL at index %d is empty", i)
 		}
@@ -79,6 +85,11 @@ func validateDocumentMetadata(docs []types.DocumentMetadata) error {
 	}
 
 	for i, doc := range docs {
+		// Validate DatasourceID
+		if doc.DatasourceID <= 0 {
+			return fmt.Errorf("document at index %d has invalid datasource ID", i)
+		}
+
 		// Validate URL
 		if strings.TrimSpace(doc.URL) == "" {
 			return fmt.Errorf("document at index %d has empty URL", i)

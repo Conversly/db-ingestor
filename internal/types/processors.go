@@ -21,10 +21,11 @@ type ProcessedContent struct {
 }
 
 type ContentChunk struct {
-    Content    string                 `json:"content"`
-    Embedding  []float64              `json:"embedding,omitempty"`
-    Metadata   map[string]interface{} `json:"metadata,omitempty"`
-    ChunkIndex int                    `json:"chunkIndex"`
+    DatasourceID int                    `json:"datasourceId,omitempty"`
+    Content      string                 `json:"content"`
+    Embedding    []float64              `json:"embedding,omitempty"`
+    Metadata     map[string]interface{} `json:"metadata,omitempty"`
+    ChunkIndex   int                    `json:"chunkIndex"`
 }
 
 // Config holds configuration for processors

@@ -29,19 +29,30 @@ const (
 
 // ====== CORE TYPES ======
 
+type WebsiteURL struct {
+	DatasourceID int    `json:"datasourceId" binding:"required,min=1"`
+	URL          string `json:"url" binding:"required,url"`
+}
+
 type QAPair struct {
-	Question  string                 `json:"question" binding:"required"`
-	Answer    string                 `json:"answer" binding:"required"`
-	Citations string                 `json:"citations,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	DatasourceID int                    `json:"datasourceId" binding:"required,min=1"`
+	Question     string                 `json:"question" binding:"required"`
+	Answer       string                 `json:"answer" binding:"required"`
+	Citations    string                 `json:"citations,omitempty"`
 }
 
 type DocumentMetadata struct {
-	URL                string `json:"url" binding:"required"`
-	DownloadURL        string `json:"downloadUrl" binding:"required"`
+	DatasourceID       int    `json:"datasourceId" binding:"required,min=1"`
+	URL                string `json:"url" binding:"required,url"`
+	DownloadURL        string `json:"downloadUrl" binding:"required,url"`
 	Pathname           string `json:"pathname" binding:"required"`
 	ContentType        string `json:"contentType" binding:"required"`
 	ContentDisposition string `json:"contentDisposition" binding:"required"`
+}
+
+type TextContent struct {
+	DatasourceID int    `json:"datasourceId" binding:"required,min=1"`
+	Content      string `json:"content" binding:"required"`
 }
 
 type ProcessingOptions struct {
@@ -54,21 +65,22 @@ type ProcessingOptions struct {
 type ProcessRequest struct {
 	UserID      string              `json:"userId" binding:"required"`
 	ChatbotID   string              `json:"chatbotId" binding:"required"`
-	WebsiteURLs []string            `json:"websiteUrls,omitempty"`
+	WebsiteURLs []WebsiteURL        `json:"websiteUrls,omitempty"`
 	QandAData   []QAPair            `json:"qandaData,omitempty"`
 	Documents   []DocumentMetadata  `json:"documents,omitempty"`
-	TextContent []string            `json:"textContent,omitempty"`
+	TextContent []TextContent       `json:"textContent,omitempty"`
 	Options     *ProcessingOptions  `json:"options,omitempty"`
 }
 
 type SourceResult struct {
-	SourceType  SourceType `json:"sourceType"`
-	Source      string     `json:"source"`
-	Status      string     `json:"status"`
-	Message     string     `json:"message,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	ChunkCount  int        `json:"chunkCount"`
-	ProcessedAt time.Time  `json:"processedAt"`
+	DatasourceID int        `json:"datasourceId,omitempty"`
+	SourceType   SourceType `json:"sourceType"`
+	Source       string     `json:"source"`
+	Status       string     `json:"status"`
+	Message      string     `json:"message,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	ChunkCount   int        `json:"chunkCount"`
+	ProcessedAt  time.Time  `json:"processedAt"`
 }
 
 type ProcessResponse struct {

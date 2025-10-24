@@ -145,31 +145,31 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
 
     var wg sync.WaitGroup
 
-    for _, url := range req.WebsiteURLs {
+    for _, websiteURL := range req.WebsiteURLs {
         wg.Add(1)
-        go func(url string) {
+        go func(websiteURL types.WebsiteURL) {
             defer wg.Done()
-            result, content := s.processSource(ctx, factory.CreateWebsiteProcessor(url), req.ChatbotID, req.UserID, url)
+            result, content := s.processSource(ctx, factory.CreateWebsiteProcessor(websiteURL.URL), req.ChatbotID, req.UserID, websiteURL.URL, websiteURL.DatasourceID)
             mu.Lock()
             results = append(results, result)
             if content != nil {
                 totalChunks += len(content.Chunks)
-                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
+                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content, websiteURL.DatasourceID)...)
             }
             mu.Unlock()
-        }(url)
+        }(websiteURL)
     }
 
     for _, qa := range req.QandAData {
         wg.Add(1)
         go func(qa types.QAPair) {
             defer wg.Done()
-            result, content := s.processSource(ctx, factory.CreateQAProcessor(qa), req.ChatbotID, req.UserID, qa.Question)
+            result, content := s.processSource(ctx, factory.CreateQAProcessor(qa), req.ChatbotID, req.UserID, qa.Question, qa.DatasourceID)
             mu.Lock()
             results = append(results, result)
             if content != nil {
                 totalChunks += len(content.Chunks)
-                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
+                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content, qa.DatasourceID)...)
             }
             mu.Unlock()
         }(qa)
@@ -184,7 +184,8 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
             // Download the file
             utils.Zlog.Info("Downloading document",
                 zap.String("url", doc.DownloadURL),
-                zap.String("pathname", doc.Pathname))
+                zap.String("pathname", doc.Pathname),
+                zap.Int("datasourceId", doc.DatasourceID))
             
             downloadedFile, err := downloader.DownloadFile(ctx, doc.DownloadURL, doc.ContentType)
             if err != nil {
@@ -194,12 +195,13 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
                 
                 mu.Lock()
                 results = append(results, types.SourceResult{
-                    SourceType:  types.DetermineSourceTypeFromContentType(doc.ContentType),
-                    Source:      doc.Pathname,
-                    Status:      "failed",
-                    Error:       fmt.Sprintf("Failed to download: %v", err),
-                    ChunkCount:  0,
-                    ProcessedAt: time.Now().UTC(),
+                    DatasourceID: doc.DatasourceID,
+                    SourceType:   types.DetermineSourceTypeFromContentType(doc.ContentType),
+                    Source:       doc.Pathname,
+                    Status:       "failed",
+                    Error:        fmt.Sprintf("Failed to download: %v", err),
+                    ChunkCount:   0,
+                    ProcessedAt:  time.Now().UTC(),
                 })
                 mu.Unlock()
                 return
@@ -212,31 +214,31 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
                 doc.ContentType,
             )
             
-            result, content := s.processSource(ctx, processor, req.ChatbotID, req.UserID, doc.Pathname)
+            result, content := s.processSource(ctx, processor, req.ChatbotID, req.UserID, doc.Pathname, doc.DatasourceID)
             mu.Lock()
             results = append(results, result)
             if content != nil {
                 totalChunks += len(content.Chunks)
-                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
+                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content, doc.DatasourceID)...)
             }
             mu.Unlock()
         }(doc)
     }
 
-    for i, text := range req.TextContent {
+    for i, textContent := range req.TextContent {
         wg.Add(1)
-        go func(text string, index int) {
+        go func(textContent types.TextContent, index int) {
             defer wg.Done()
             topic := fmt.Sprintf("Text content #%d", index+1)
-            result, content := s.processSource(ctx, factory.CreateTextProcessor(text, topic), req.ChatbotID, req.UserID, topic)
+            result, content := s.processSource(ctx, factory.CreateTextProcessor(textContent.Content, topic), req.ChatbotID, req.UserID, topic, textContent.DatasourceID)
             mu.Lock()
             results = append(results, result)
             if content != nil {
                 totalChunks += len(content.Chunks)
-                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content)...)
+                allChunks = append(allChunks, s.convertAndAddCitationToChunks(content, textContent.DatasourceID)...)
             }
             mu.Unlock()
-        }(text, i)
+        }(textContent, i)
     }
 
     wg.Wait()
@@ -244,12 +246,13 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
     return results, totalChunks, allChunks
 }
 
-func (s *Service) processSource(ctx context.Context, processor types.Processor, chatbotID, userID, source string) (types.SourceResult, *types.ProcessedContent) {
+func (s *Service) processSource(ctx context.Context, processor types.Processor, chatbotID, userID, source string, datasourceID int) (types.SourceResult, *types.ProcessedContent) {
     startTime := time.Now()
 
     utils.Zlog.Info("Processing source",
         zap.String("source", source),
-        zap.String("type", string(processor.GetSourceType())))
+        zap.String("type", string(processor.GetSourceType())),
+        zap.Int("datasourceId", datasourceID))
 
     content, err := processor.Process(ctx, chatbotID, userID)
     if err != nil {
@@ -257,12 +260,13 @@ func (s *Service) processSource(ctx context.Context, processor types.Processor, 
             zap.String("source", source),
             zap.Error(err))
         return types.SourceResult{
-            SourceType:  processor.GetSourceType(),
-            Source:      source,
-            Status:      "failed",
-            Error:       err.Error(),
-            ChunkCount:  0,
-            ProcessedAt: time.Now().UTC(),
+            DatasourceID: datasourceID,
+            SourceType:   processor.GetSourceType(),
+            Source:       source,
+            Status:       "failed",
+            Error:        err.Error(),
+            ChunkCount:   0,
+            ProcessedAt:  time.Now().UTC(),
         }, nil
     }
 
@@ -273,12 +277,13 @@ func (s *Service) processSource(ctx context.Context, processor types.Processor, 
         zap.Duration("duration", duration))
 
     return types.SourceResult{
-        SourceType:  processor.GetSourceType(),
-        Source:      source,
-        Status:      "success",
-        Message:     fmt.Sprintf("Processed successfully in %v", duration),
-        ChunkCount:  len(content.Chunks),
-        ProcessedAt: time.Now().UTC(),
+        DatasourceID: datasourceID,
+        SourceType:   processor.GetSourceType(),
+        Source:       source,
+        Status:       "success",
+        Message:      fmt.Sprintf("Processed successfully in %v", duration),
+        ChunkCount:   len(content.Chunks),
+        ProcessedAt:  time.Now().UTC(),
     }, content
 }
 
@@ -307,16 +312,17 @@ func (s *Service) generateResponseMessage(successful, failed int) string {
 }
 
 // convertAndAddCitationToChunks converts processor chunks to ingestion chunks and adds citation
-func (s *Service) convertAndAddCitationToChunks(content *types.ProcessedContent) []types.ContentChunk {
+func (s *Service) convertAndAddCitationToChunks(content *types.ProcessedContent, datasourceID int) []types.ContentChunk {
     citation := determineCitation(content)
     chunks := make([]types.ContentChunk, len(content.Chunks))
     
     for i, chunk := range content.Chunks {
         chunks[i] = types.ContentChunk{
-            Content:    chunk.Content,
-            Embedding:  chunk.Embedding,
-            Metadata:   chunk.Metadata,
-            ChunkIndex: chunk.ChunkIndex,
+            DatasourceID: datasourceID,
+            Content:      chunk.Content,
+            Embedding:    chunk.Embedding,
+            Metadata:     chunk.Metadata,
+            ChunkIndex:   chunk.ChunkIndex,
         }
         
         if chunks[i].Metadata == nil {
@@ -325,6 +331,7 @@ func (s *Service) convertAndAddCitationToChunks(content *types.ProcessedContent)
         chunks[i].Metadata["citation"] = citation
         chunks[i].Metadata["sourceType"] = string(content.SourceType)
         chunks[i].Metadata["topic"] = content.Topic
+        chunks[i].Metadata["datasourceId"] = datasourceID
     }
     return chunks
 }
