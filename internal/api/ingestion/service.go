@@ -80,22 +80,40 @@ func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types
     record.UpdatedAt = completedAt
 
     if s.workers != nil && len(allChunks) > 0 {
-        job := EmbeddingJob{
-            JobID:     jobID,
-            UserID:    req.UserID,
-            ChatbotID: req.ChatbotID,
-            Chunks:    allChunks,
-            CreatedAt: time.Now().UTC(),
+        // Group chunks by datasourceID for parallel processing
+        chunksByDatasource := make(map[int][]types.ContentChunk)
+        for _, chunk := range allChunks {
+            chunksByDatasource[chunk.DatasourceID] = append(chunksByDatasource[chunk.DatasourceID], chunk)
         }
-        if ok := s.workers.Enqueue(job); !ok {
-            utils.Zlog.Warn("Embedding queue is full; dropping job",
-                zap.String("jobId", jobID),
-                zap.Int("chunks", len(allChunks)))
-        } else {
-            utils.Zlog.Info("Embedding job enqueued",
-                zap.String("jobId", jobID),
-                zap.Int("chunks", len(allChunks)))
+        
+        // Enqueue separate jobs for each datasource to enable parallel processing
+        enqueuedJobs := 0
+        droppedJobs := 0
+        for datasourceID, chunks := range chunksByDatasource {
+            job := EmbeddingJob{
+                JobID:     fmt.Sprintf("%s-ds-%d", jobID, datasourceID),
+                UserID:    req.UserID,
+                ChatbotID: req.ChatbotID,
+                Chunks:    chunks,
+                CreatedAt: time.Now().UTC(),
+            }
+            if ok := s.workers.Enqueue(job); !ok {
+                utils.Zlog.Warn("Embedding queue is full; dropping job",
+                    zap.String("jobId", job.JobID),
+                    zap.Int("datasourceId", datasourceID),
+                    zap.Int("chunks", len(chunks)))
+                droppedJobs++
+            } else {
+                enqueuedJobs++
+            }
         }
+        
+        utils.Zlog.Info("Embedding jobs enqueued",
+            zap.String("jobId", jobID),
+            zap.Int("datasources", len(chunksByDatasource)),
+            zap.Int("enqueuedJobs", enqueuedJobs),
+            zap.Int("droppedJobs", droppedJobs),
+            zap.Int("totalChunks", len(allChunks)))
     }
 
     response := &types.ProcessResponse{

@@ -8,44 +8,20 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Conversly/db-ingestor/internal/types"
 )
-
-// EmbeddingRequest represents the request payload for Gemini embedding API
-type EmbeddingRequest struct {
-	Model               string           `json:"model"`
-	Content             EmbeddingContent `json:"content"`
-	TaskType            string           `json:"taskType,omitempty"`
-	OutputDimensionality int             `json:"outputDimensionality,omitempty"`
-}
-
-// EmbeddingContent represents the content structure for embedding
-type EmbeddingContent struct {
-	Parts []Part `json:"parts"`
-}
-
-// Part represents a single part of the content
-type Part struct {
-	Text string `json:"text"`
-}
-
-// EmbeddingResponse represents the response from Gemini embedding API
-type EmbeddingResponse struct {
-	Embedding Embedding `json:"embedding"`
-}
-
-// Embedding represents the embedding vector
-type Embedding struct {
-	Values []float64 `json:"values"`
-}
 
 // GeminiEmbedder handles embedding generation with rotating API keys
 type GeminiEmbedder struct {
-	apiKeys  []string
-	client   *http.Client
-	baseURL  string
-	keyIndex uint64 // atomic counter for round-robin key selection
+	apiKeys     []string
+	client      *http.Client
+	baseURL     string
+	keyIndex    uint64        // atomic counter for round-robin key selection
+	rateLimiter chan struct{} // global rate limiter across all workers
 }
 
 // NewGeminiEmbedder creates a new embedder with API keys
@@ -53,11 +29,14 @@ func NewGeminiEmbedder(keys []string) (*GeminiEmbedder, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("at least one API key is required")
 	}
+	maxConcurrentRequests := 5
+
 	return &GeminiEmbedder{
-		apiKeys:  keys,
-		client:   &http.Client{Timeout: 30 * time.Second},
-		baseURL:  "https://generativelanguage.googleapis.com/v1beta/models",
-		keyIndex: 0,
+		apiKeys:     keys,
+		client:      &http.Client{Timeout: 30 * time.Second},
+		baseURL:     "https://generativelanguage.googleapis.com/v1beta/models",
+		keyIndex:    0,
+		rateLimiter: make(chan struct{}, maxConcurrentRequests),
 	}, nil
 }
 
@@ -102,10 +81,17 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 		return nil, fmt.Errorf("text cannot be empty")
 	}
 
-	reqBody := EmbeddingRequest{
+	select {
+	case g.rateLimiter <- struct{}{}:
+		defer func() { <-g.rateLimiter }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	reqBody := types.EmbeddingRequest{
 		Model: "text-embedding-004",
-		Content: EmbeddingContent{
-			Parts: []Part{
+		Content: types.EmbeddingContent{
+			Parts: []types.Part{
 				{Text: text},
 			},
 		},
@@ -118,7 +104,6 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Get next API key using round-robin strategy
 	apiKey := g.getNextKey()
 	url := fmt.Sprintf("%s/text-embedding-004:embedContent?key=%s", g.baseURL, apiKey)
 
@@ -140,7 +125,7 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var embeddingResp EmbeddingResponse
+	var embeddingResp types.EmbeddingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -149,7 +134,6 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 		return nil, fmt.Errorf("no embeddings returned from API")
 	}
 
-	// Verify we got the expected dimension
 	if len(embeddingResp.Embedding.Values) != 768 {
 		return nil, fmt.Errorf("expected 768 dimensions, got %d", len(embeddingResp.Embedding.Values))
 	}
@@ -166,29 +150,20 @@ func (g *GeminiEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	embeddings := make([][]float64, len(texts))
 	errors := make([]error, len(texts))
 
-	// Limit concurrent requests to avoid rate limiting on free tier
-	sem := make(chan struct{}, 5) // max 5 concurrent requests
+	var wg sync.WaitGroup
 
 	for i, text := range texts {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case sem <- struct{}{}:
-			go func(idx int, txt string) {
-				defer func() { <-sem }()
-				embedding, err := g.EmbedText(ctx, txt)
-				embeddings[idx] = embedding
-				errors[idx] = err
-			}(i, text)
-		}
+		wg.Add(1)
+		go func(idx int, txt string) {
+			defer wg.Done()
+			embedding, err := g.EmbedText(ctx, txt)
+			embeddings[idx] = embedding
+			errors[idx] = err
+		}(i, text)
 	}
 
-	// Wait for all goroutines to finish
-	for i := 0; i < cap(sem); i++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 
-	// Check for errors
 	for i, err := range errors {
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed text at index %d: %w", i, err)
