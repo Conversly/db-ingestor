@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Conversly/db-ingestor/internal/embedder"
+	"github.com/Conversly/db-ingestor/internal/loaders"
 	"github.com/Conversly/db-ingestor/internal/types"
 	"github.com/Conversly/db-ingestor/internal/utils"
 	"go.uber.org/zap"
@@ -26,9 +27,10 @@ type WorkerPool struct {
 	wg         sync.WaitGroup
 	numWorkers int
 	embedder   *embedder.GeminiEmbedder
+	db         *loaders.PostgresClient
 }
 
-func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.GeminiEmbedder) *WorkerPool {
+func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.GeminiEmbedder, db *loaders.PostgresClient) *WorkerPool {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -40,6 +42,7 @@ func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.G
 		quit:       make(chan struct{}),
 		numWorkers: numWorkers,
 		embedder:   geminiEmbedder,
+		db:         db,
 	}
 }
 
@@ -119,6 +122,7 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 	successCount := 0
 	failCount := 0
 
+	// Generate embeddings for all chunks
 	for i := range job.Chunks {
 		embedding, err := wp.embedder.EmbedText(ctx, job.Chunks[i].Content)
 		utils.Zlog.Info("Embedding generated",
@@ -149,7 +153,7 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 	}
 
 	duration := time.Since(start)
-	utils.Zlog.Info("Completed embedding job",
+	utils.Zlog.Info("Completed embedding generation",
 		zap.Int("workerId", workerID),
 		zap.String("jobId", job.JobID),
 		zap.String("chatbotId", job.ChatbotID),
@@ -157,6 +161,81 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 		zap.Int("failed", failCount),
 		zap.Duration("duration", duration))
 
-	// TODO: Persist embeddings to database
-	// For now, embeddings are stored in memory in job.Chunks[].Embedding
+	// Persist embeddings to database
+	if wp.db != nil && successCount > 0 {
+		if err := wp.persistEmbeddings(ctx, job); err != nil {
+			utils.Zlog.Error("Failed to persist embeddings to database",
+				zap.Int("workerId", workerID),
+				zap.String("jobId", job.JobID),
+				zap.Error(err))
+			return
+		}
+
+		utils.Zlog.Info("Successfully persisted embeddings to database",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", job.JobID),
+			zap.Int("embeddingsCount", successCount))
+	}
+}
+
+// persistEmbeddings saves embeddings to the database and updates data source status
+func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) error {
+	// Prepare embedding data for insertion
+	var embeddingData []loaders.EmbeddingData
+	dataSourceIDsMap := make(map[int]bool)
+
+	for _, chunk := range job.Chunks {
+		if len(chunk.Embedding) == 0 {
+			continue
+		}
+
+		// Extract citation from metadata if available
+		var citation *string
+		if citationVal, ok := chunk.Metadata["citation"].(string); ok && citationVal != "" {
+			citation = &citationVal
+		}
+
+		var dataSourceID *int
+		if chunk.DatasourceID > 0 {
+			dataSourceID = &chunk.DatasourceID
+			dataSourceIDsMap[chunk.DatasourceID] = true
+		}
+
+		embeddingData = append(embeddingData, loaders.EmbeddingData{
+			Text:         chunk.Content,
+			Vector:       chunk.Embedding,
+			DataSourceID: dataSourceID,
+			Citation:     citation,
+		})
+	}
+
+	if len(embeddingData) == 0 {
+		return nil
+	}
+
+	// Insert embeddings into database
+	if err := wp.db.BatchInsertEmbeddings(ctx, job.UserID, job.ChatbotID, embeddingData); err != nil {
+		return err
+	}
+
+	// Update data source status to COMPLETED
+	if len(dataSourceIDsMap) > 0 {
+		var dataSourceIDs []int
+		for id := range dataSourceIDsMap {
+			dataSourceIDs = append(dataSourceIDs, id)
+		}
+
+		if err := wp.db.UpdateDataSourceStatus(ctx, dataSourceIDs, "COMPLETED"); err != nil {
+			utils.Zlog.Error("Failed to update data source status",
+				zap.String("jobId", job.JobID),
+				zap.Error(err))
+			return err
+		}
+
+		utils.Zlog.Info("Updated data source status to COMPLETED",
+			zap.String("jobId", job.JobID),
+			zap.Int("dataSourceCount", len(dataSourceIDs)))
+	}
+
+	return nil
 }

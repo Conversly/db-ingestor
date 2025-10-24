@@ -29,7 +29,7 @@ func RegisterRoutes(router *gin.RouterGroup, db *loaders.PostgresClient, cfg *co
 		utils.Zlog.Warn("No Gemini API keys provided, embedder will not be initialized")
 	}
 
-	workers := NewWorkerPool(cfg.WorkerCount, queueCapacity, geminiEmbedder)
+	workers := NewWorkerPool(cfg.WorkerCount, queueCapacity, geminiEmbedder, db)
 	workers.Start()
 
 	service := NewService(db, workers)

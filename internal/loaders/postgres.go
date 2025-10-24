@@ -82,3 +82,97 @@ func (c *PostgresClient) Close() error {
 func (c *PostgresClient) GetPool() *pgxpool.Pool {
 	return c.pool
 }
+
+// BatchInsertEmbeddings inserts a batch of embeddings into the database
+func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chatbotID string, chunks []EmbeddingData) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+		INSERT INTO embeddings (
+			user_id, chatbot_id, text, vector, 
+			created_at, updated_at, data_source_id, citation
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+
+	now := formatTimeForDB(time.Now().UTC())
+	successCount := 0
+
+	for _, chunk := range chunks {
+		_, err := tx.Exec(ctx, query,
+			userID,
+			chatbotID,
+			chunk.Text,
+			chunk.Vector,
+			now,
+			now,
+			chunk.DataSourceID,
+			chunk.Citation,
+		)
+		if err != nil {
+			log.Printf("Failed to insert embedding for data_source_id=%d: %v", chunk.DataSourceID, err)
+			continue
+		}
+		successCount++
+	}
+
+	if successCount == 0 {
+		return fmt.Errorf("failed to insert any embeddings")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Successfully inserted %d/%d embeddings", successCount, len(chunks))
+	return nil
+}
+
+// UpdateDataSourceStatus updates the status of data sources to COMPLETED
+func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceIDs []int, status string) error {
+	if len(dataSourceIDs) == 0 {
+		return nil
+	}
+
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+		UPDATE data_source 
+		SET status = $1, updated_at = $2
+		WHERE id = ANY($3)
+	`
+
+	now := formatTimeForDB(time.Now().UTC())
+	result, err := tx.Exec(ctx, query, status, now, dataSourceIDs)
+	if err != nil {
+		return fmt.Errorf("failed to update data source status: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	log.Printf("Updated status to '%s' for %d data sources", status, rowsAffected)
+	return nil
+}
+
+// EmbeddingData represents the data needed to insert an embedding
+type EmbeddingData struct {
+	Topic        string
+	Text         string
+	Vector       []float64
+	DataSourceID *int
+	Citation     *string
+}
