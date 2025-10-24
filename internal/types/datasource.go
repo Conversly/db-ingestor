@@ -27,50 +27,51 @@ const (
 	StatusPartial    ProcessStatus = "partial"
 )
 
-// ====== CORE TYPES ======
+// ====== DATA STRUCTURES ======
 
 type WebsiteURL struct {
-	DatasourceID int    `json:"datasourceId" binding:"required,min=1"`
-	URL          string `json:"url" binding:"required,url"`
+	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	URL          string `json:"url" validate:"required,url"`
 }
 
 type QAPair struct {
-	DatasourceID int                    `json:"datasourceId" binding:"required,min=1"`
-	Question     string                 `json:"question" binding:"required"`
-	Answer       string                 `json:"answer" binding:"required"`
-	Citations    string                 `json:"citations,omitempty"`
+	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	Question     string `json:"question" validate:"required"`
+	Answer       string `json:"answer" validate:"required"`
+	Citations    string `json:"citations,omitempty"`
 }
 
 type DocumentMetadata struct {
-	DatasourceID       int    `json:"datasourceId" binding:"required,min=1"`
-	URL                string `json:"url" binding:"required,url"`
-	DownloadURL        string `json:"downloadUrl" binding:"required,url"`
-	Pathname           string `json:"pathname" binding:"required"`
-	ContentType        string `json:"contentType" binding:"required"`
-	ContentDisposition string `json:"contentDisposition" binding:"required"`
+	DatasourceID       int    `json:"datasourceId" validate:"required,min=1"`
+	URL                string `json:"url" validate:"required,url"`
+	DownloadURL        string `json:"downloadUrl" validate:"required,url"`
+	Pathname           string `json:"pathname" validate:"required"`
+	ContentType        string `json:"contentType" validate:"required,oneof=application/pdf text/plain text/csv application/csv application/json application/msword application/vnd.openxmlformats-officedocument.wordprocessingml.document"`
+	ContentDisposition string `json:"contentDisposition" validate:"required"`
 }
 
 type TextContent struct {
-	DatasourceID int    `json:"datasourceId" binding:"required,min=1"`
-	Content      string `json:"content" binding:"required"`
+	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	Content      string `json:"content" validate:"required"`
 }
 
 type ProcessingOptions struct {
-	ChunkSize    int `json:"chunkSize,omitempty"`
-	ChunkOverlap int `json:"chunkOverlap,omitempty"`
+	ChunkSize    int `json:"chunkSize,omitempty" validate:"omitempty,min=0"`
+	ChunkOverlap int `json:"chunkOverlap,omitempty" validate:"omitempty,min=0"`
 }
 
-// ====== REQUEST / RESPONSE TYPES ======
+// request structure for processing ingestion
 
 type ProcessRequest struct {
-	UserID      string              `json:"userId" binding:"required"`
-	ChatbotID   string              `json:"chatbotId" binding:"required"`
-	WebsiteURLs []WebsiteURL        `json:"websiteUrls,omitempty"`
-	QandAData   []QAPair            `json:"qandaData,omitempty"`
-	Documents   []DocumentMetadata  `json:"documents,omitempty"`
-	TextContent []TextContent       `json:"textContent,omitempty"`
-	Options     *ProcessingOptions  `json:"options,omitempty"`
+	UserID      string             `json:"userId" validate:"required"`
+	ChatbotID   string             `json:"chatbotId" validate:"required"`
+	WebsiteURLs []WebsiteURL       `json:"websiteUrls,omitempty" validate:"omitempty,dive"`
+	QandAData   []QAPair           `json:"qandaData,omitempty" validate:"omitempty,dive"`
+	Documents   []DocumentMetadata `json:"documents,omitempty" validate:"omitempty,dive"`
+	TextContent []TextContent      `json:"textContent,omitempty" validate:"omitempty,dive"`
+	Options     *ProcessingOptions `json:"options,omitempty"`
 }
+
 
 type SourceResult struct {
 	DatasourceID int        `json:"datasourceId,omitempty"`

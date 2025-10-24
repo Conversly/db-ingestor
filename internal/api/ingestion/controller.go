@@ -44,19 +44,12 @@ func (ctrl *Controller) Process(c *gin.Context) {
 		return
 	}
 
-	// Validate required fields
-	if req.UserID == "" {
+	// Validate request using the validator
+	if err := ValidateProcessRequest(&req); err != nil {
+		utils.Zlog.Error("Validation failed", zap.Error(err))
 		c.JSON(http.StatusBadRequest, types.ErrorResponse{
 			Error:     "Bad Request",
-			Message:   "userId is required",
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-	if req.ChatbotID == "" {
-		c.JSON(http.StatusBadRequest, types.ErrorResponse{
-			Error:     "Bad Request",
-			Message:   "chatbotId is required",
+			Message:   err.Error(),
 			Timestamp: time.Now().UTC(),
 		})
 		return
@@ -73,86 +66,4 @@ func (ctrl *Controller) Process(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response)
-}
-
-func (ctrl *Controller) ProcessWebsites(c *gin.Context) {
-	var req struct {
-		UserID    string                   `json:"userId" binding:"required"`
-		ChatbotID string                   `json:"chatbotId" binding:"required"`
-		URLs      []types.WebsiteURL       `json:"urls" binding:"required,min=1"`
-		Options   *types.ProcessingOptions `json:"options,omitempty"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.ErrorResponse{
-			Error:     "Bad Request",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	processReq := types.ProcessRequest{
-		UserID:      req.UserID,
-		ChatbotID:   req.ChatbotID,
-		WebsiteURLs: req.URLs,
-		Options:     req.Options,
-	}
-
-	response, err := ctrl.service.Process(c.Request.Context(), processReq)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.ErrorResponse{
-			Error:     "Internal Server Error",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-func (ctrl *Controller) ProcessQA(c *gin.Context) {
-	var req struct {
-		UserID    string          `json:"userId" binding:"required"`
-		ChatbotID string          `json:"chatbotId" binding:"required"`
-		QAPairs   []types.QAPair  `json:"qaPairs" binding:"required,min=1"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.ErrorResponse{
-			Error:     "Bad Request",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	processReq := types.ProcessRequest{
-		UserID:    req.UserID,
-		ChatbotID: req.ChatbotID,
-		QandAData: req.QAPairs,
-	}
-
-	response, err := ctrl.service.Process(c.Request.Context(), processReq)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.ErrorResponse{
-			Error:     "Internal Server Error",
-			Message:   err.Error(),
-			Timestamp: time.Now().UTC(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-// ValidationError represents a validation error
-type ValidationError struct {
-	Field   string
-	Message string
-}
-
-func (e *ValidationError) Error() string {
-	return e.Message
 }

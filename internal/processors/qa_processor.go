@@ -39,13 +39,6 @@ func (p *QAProcessor) Process(ctx context.Context, chatbotID, userID string) (*t
 		},
 	}
 
-	// Merge any additional metadata from the QA pair
-	if p.QAPair.Metadata != nil {
-		for k, v := range p.QAPair.Metadata {
-			chunk.Metadata[k] = v
-		}
-	}
-
 	return &types.ProcessedContent{
 		SourceType: types.SourceTypeQA,
 		Content:    content,
