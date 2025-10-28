@@ -54,29 +54,29 @@ func (g *GeminiEmbedder) getNextKey() string {
 }
 
 // normalize normalizes a vector to unit length
-func normalize(vec []float64) []float64 {
+func normalize(vec []float32) []float32 {
 	if len(vec) == 0 {
 		return vec
 	}
 
-	norm := 0.0
+	norm := float32(0.0)
 	for _, v := range vec {
 		norm += v * v
 	}
-	norm = math.Sqrt(norm)
+	norm = float32(math.Sqrt(float64(norm)))
 
-	if norm == 0 || math.IsNaN(norm) || math.IsInf(norm, 0) {
+	if norm == 0 || math.IsNaN(float64(norm)) || math.IsInf(float64(norm), 0) {
 		return vec
 	}
 
-	normalized := make([]float64, len(vec))
+	normalized := make([]float32, len(vec))
 	for i, v := range vec {
 		normalized[i] = v / norm
 	}
 	return normalized
 }
 
-func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64, error) {
+func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float32, error) {
 	if text == "" {
 		return nil, fmt.Errorf("text cannot be empty")
 	}
@@ -95,7 +95,7 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 				{Text: text},
 			},
 		},
-		TaskType:            "RETRIEVAL_DOCUMENT",
+		TaskType:             "RETRIEVAL_DOCUMENT",
 		OutputDimensionality: 768,
 	}
 
@@ -142,12 +142,12 @@ func (g *GeminiEmbedder) EmbedText(ctx context.Context, text string) ([]float64,
 	return normalized, nil
 }
 
-func (g *GeminiEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+func (g *GeminiEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("no texts provided")
 	}
 
-	embeddings := make([][]float64, len(texts))
+	embeddings := make([][]float32, len(texts))
 	errors := make([]error, len(texts))
 
 	var wg sync.WaitGroup

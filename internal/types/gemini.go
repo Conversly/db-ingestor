@@ -1,10 +1,10 @@
 package types
 
 type EmbeddingRequest struct {
-	Model               string           `json:"model"`
-	Content             EmbeddingContent `json:"content"`
-	TaskType            string           `json:"taskType,omitempty"`
-	OutputDimensionality int             `json:"outputDimensionality,omitempty"`
+	Model                string           `json:"model"`
+	Content              EmbeddingContent `json:"content"`
+	TaskType             string           `json:"taskType,omitempty"`
+	OutputDimensionality int              `json:"outputDimensionality,omitempty"`
 }
 
 // EmbeddingContent represents the content structure for embedding
@@ -24,5 +24,5 @@ type EmbeddingResponse struct {
 
 // Embedding represents the embedding vector
 type Embedding struct {
-	Values []float64 `json:"values"`
+	Values []float32 `json:"values"`
 }

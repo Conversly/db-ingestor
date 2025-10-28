@@ -6,10 +6,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 )
-
-
 
 type PostgresClient struct {
 	dsn  string
@@ -45,8 +46,13 @@ func (c *PostgresClient) createConnectionPool(workerCount, batchSize int) (*pgxp
 	cfg.MaxConnLifetime = 60 * time.Minute
 	cfg.MaxConnIdleTime = 15 * time.Minute
 
+	// Register pgvector types for each connection in the pool
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		return pgxvec.RegisterTypes(ctx, conn)
+	}
+
 	log.Printf("Creating Postgres connection pool with MaxConns=%d", cfg.MaxConns)
-	pool, err := pgxpool.ConnectConfig(context.Background(), cfg)
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		log.Printf("Failed to create pgx pool: %v", err)
 		return nil, fmt.Errorf("failed to create pgx pool: %w", err)
@@ -61,15 +67,21 @@ func (c *PostgresClient) createConnectionPool(workerCount, batchSize int) (*pgxp
 		return nil, fmt.Errorf("failed to ping Postgres: %w", err)
 	}
 
-	log.Println("Postgres connection pool established successfully")
+	// Enable pgvector extension
+	log.Println("Enabling pgvector extension")
+	_, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	if err != nil {
+		log.Printf("Warning: Failed to enable pgvector extension: %v", err)
+		// Don't fail here as the extension might already be enabled or user may lack permissions
+	}
+
+	log.Println("Postgres connection pool established successfully with pgvector support")
 	return pool, nil
 }
-
 
 func formatTimeForDB(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.000000")
 }
-
 
 func (c *PostgresClient) Close() error {
 	if c.pool != nil {
@@ -77,7 +89,6 @@ func (c *PostgresClient) Close() error {
 	}
 	return nil
 }
-
 
 func (c *PostgresClient) GetPool() *pgxpool.Pool {
 	return c.pool
@@ -89,7 +100,14 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 		return nil
 	}
 
-	tx, err := c.pool.Begin(ctx)
+	// Acquire a connection from the pool to ensure pgvector types are registered
+	conn, err := c.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -106,11 +124,14 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 	successCount := 0
 
 	for _, chunk := range chunks {
+		// Vector is already []float32, use it directly
+		vec := pgvector.NewVector(chunk.Vector)
+
 		_, err := tx.Exec(ctx, query,
 			userID,
 			chatbotID,
 			chunk.Text,
-			chunk.Vector,
+			vec,
 			now,
 			now,
 			chunk.DataSourceID,
@@ -172,7 +193,7 @@ func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceI
 type EmbeddingData struct {
 	Topic        string
 	Text         string
-	Vector       []float64
+	Vector       []float32
 	DataSourceID *int
 	Citation     *string
 }
