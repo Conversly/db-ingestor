@@ -38,5 +38,4 @@ COPY --from=builder /conversly .
 # Create cmd directory and ensure proper permissions
 RUN mkdir -p /app/cmd && chmod +x ./conversly
 
-# Command to run the executable
 CMD ["./conversly"]
