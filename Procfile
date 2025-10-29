@@ -1,1 +1,1 @@
-web: ./conversly
+worker: ./conversly
