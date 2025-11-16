@@ -23,7 +23,7 @@ DATABASE TABLES :
 model embeddings {
   id           Int                   @id @default(autoincrement())
   userId       String                @db.VarChar
-  chatbotid    Int
+  chatbotid    String                // cuid2 string ID
   topic        String                @db.VarChar
   text         String                @db.VarChar
   embedding    Unsupported("vector")
@@ -40,7 +40,7 @@ model embeddings {
 
 model DataSource {
   id            Int          @id @default(autoincrement())
-  chatbotId     Int
+  chatbotId     String       // cuid2 string ID
   type          String
   sourceDetails Json         @db.Json
   createdAt     DateTime?    @default(now()) @db.Timestamptz(6)

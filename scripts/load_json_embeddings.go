@@ -17,7 +17,7 @@ import (
 type JSONRecord struct {
 	ID           int     `json:"id"`
 	UserID       string  `json:"userId"`
-	ChatbotID    int     `json:"chatbotid"`
+	ChatbotID    string  `json:"chatbotid"`
 	Text         string  `json:"text"`
 	CreatedAt    string  `json:"createdAt"`
 	UpdatedAt    string  `json:"updatedAt"`
@@ -188,9 +188,17 @@ func processRecord(
 		return fmt.Errorf("text field is empty")
 	}
 
-	// Hardcoded values
-	userID := "19280499-9952-4275-99e9-3cde452b31fa"
-	chatbotID := "5"
+	// Use values from record or defaults
+	userID := record.UserID
+	if userID == "" || userID == "NaN" {
+		userID = "19280499-9952-4275-99e9-3cde452b31fa" // fallback default
+	}
+
+	chatbotID := record.ChatbotID
+	if chatbotID == "" {
+		chatbotID = "clxxx-default-chatbot-id" // fallback default cuid2 format
+	}
+
 	dataSourceID := 12
 
 	logger.Info("Generating embedding",

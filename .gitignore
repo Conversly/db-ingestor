@@ -1,3 +1,9 @@
+# IDE - IntelliJ / GoLand
+.idea/
+*.iml
+*.iws
+*.ipr
+
 # Logs
 logs
 *.log
@@ -139,3 +145,15 @@ dist
 
 copy_trade_debug/
 limit_order_debug/
+
+# Go build artifacts
+main
+load_json_embeddings
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work

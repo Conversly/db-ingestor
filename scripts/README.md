@@ -34,15 +34,11 @@ The JSON file should be an array of objects with the following structure:
 ```json
 [
   {
-    "id": 170,
     "userId": "user123",
-    "chatbotid": 14,
+    "chatbotid": "clxxx-example-cuid2-id",
     "topic": "why intentjs and what is intentjs?",
-    "text": "Question: why intentjs...",
-    "createdAt": "2025-02-16 10:36:28.132316+00",
-    "updatedAt": "2025-02-16 10:36:28.132316+00",
-    "dataSourceId": null,
-    "citation": "why intentjs and what is intentjs?"
+    "text": "Intent is a web application framework...",
+    "embedding": [0.1, 0.2, 0.3, ...]
   }
 ]
 ```
@@ -73,7 +69,8 @@ export GEMINI_API_KEYS="key1,key2,key3"
 
 ## Notes
 
-- The script handles "NaN" values in the `userId` field by converting them to "unknown"
+- The script handles "NaN" values in the `userId` field by using a fallback default value
+- `chatbotId` must be a cuid2 string format (e.g., "clxxx-example-cuid2-id")
 - Empty text fields are skipped with an error log
 - Each embedding generation has a 30-second timeout
 - Database insertions have a 10-second timeout
