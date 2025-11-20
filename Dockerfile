@@ -38,4 +38,7 @@ COPY --from=builder /conversly .
 # Create cmd directory and ensure proper permissions
 RUN mkdir -p /app/cmd && chmod +x ./conversly
 
+# Expose port 8070
+EXPOSE 8070
+
 CMD ["./conversly"]
