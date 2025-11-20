@@ -34,10 +34,10 @@ func main() {
 	cleanup := utils.InitLogger(cfg)
 	defer cleanup()
 
-	utils.Zlog.Info("Starting application", 
+	utils.Zlog.Info("Starting application",
 		zap.String("service", cfg.ServiceName),
 		zap.String("environment", cfg.Environment),
-		zap.String("port", cfg.ServerPort))
+		zap.String("port", cfg.Port))
 
 	db, err := loaders.NewPostgresClient(cfg.DatabaseURL, cfg.WorkerCount, cfg.BatchSize)
 	if err != nil {
@@ -59,7 +59,7 @@ func main() {
 	routes.SetupRoutes(router, db, cfg)
 
 	srv := &http.Server{
-		Addr:         ":" + cfg.ServerPort,
+		Addr:         "0.0.0.0:" + cfg.Port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
