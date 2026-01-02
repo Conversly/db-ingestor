@@ -20,14 +20,21 @@ type EmbeddingJob struct {
 	CreatedAt time.Time
 }
 
+type IngestionJob struct {
+	JobID   string
+	Request types.ProcessRequest
+}
+
 type WorkerPool struct {
-	jobs       chan EmbeddingJob
-	quit       chan struct{}
-	started    bool
-	wg         sync.WaitGroup
-	numWorkers int
-	embedder   *embedder.GeminiEmbedder
-	db         *loaders.PostgresClient
+	embeddingJobs chan EmbeddingJob
+	ingestionJobs chan IngestionJob
+	quit          chan struct{}
+	started       bool
+	wg            sync.WaitGroup
+	numWorkers    int
+	embedder      *embedder.GeminiEmbedder
+	db            *loaders.PostgresClient
+	processFunc   func(ctx context.Context, job IngestionJob)
 }
 
 func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.GeminiEmbedder, db *loaders.PostgresClient) *WorkerPool {
@@ -38,12 +45,17 @@ func NewWorkerPool(numWorkers int, queueCapacity int, geminiEmbedder *embedder.G
 		queueCapacity = 100
 	}
 	return &WorkerPool{
-		jobs:       make(chan EmbeddingJob, queueCapacity),
-		quit:       make(chan struct{}),
-		numWorkers: numWorkers,
-		embedder:   geminiEmbedder,
-		db:         db,
+		embeddingJobs: make(chan EmbeddingJob, queueCapacity),
+		ingestionJobs: make(chan IngestionJob, queueCapacity),
+		quit:          make(chan struct{}),
+		numWorkers:    numWorkers,
+		embedder:      geminiEmbedder,
+		db:            db,
 	}
+}
+
+func (wp *WorkerPool) SetProcessFunc(fn func(ctx context.Context, job IngestionJob)) {
+	wp.processFunc = fn
 }
 
 func (wp *WorkerPool) Start() {
@@ -61,10 +73,14 @@ func (wp *WorkerPool) Start() {
 				case <-wp.quit:
 					utils.Zlog.Info("Worker stopping", zap.Int("workerId", workerID))
 					return
-				case job := <-wp.jobs:
+				case job := <-wp.ingestionJobs:
+					if wp.processFunc != nil {
+						ctx := context.Background()
+						wp.processFunc(ctx, job)
+					}
+				case job := <-wp.embeddingJobs:
 					wp.processEmbeddingJob(workerID, job)
 				}
-
 			}
 		}(i + 1)
 	}
@@ -95,7 +111,21 @@ func (wp *WorkerPool) Enqueue(job EmbeddingJob) bool {
 	default:
 	}
 	select {
-	case wp.jobs <- job:
+	case wp.embeddingJobs <- job:
+		return true
+	default:
+		return false
+	}
+}
+
+func (wp *WorkerPool) EnqueueIngestion(job IngestionJob) bool {
+	select {
+	case <-wp.quit:
+		return false
+	default:
+	}
+	select {
+	case wp.ingestionJobs <- job:
 		return true
 	default:
 		return false

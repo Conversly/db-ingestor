@@ -30,9 +30,12 @@ func RegisterRoutes(router *gin.RouterGroup, db *loaders.PostgresClient, cfg *co
 	}
 
 	workers := NewWorkerPool(cfg.WorkerCount, queueCapacity, geminiEmbedder, db)
+	service := NewService(db, workers)
+
+	// Wire up the ingestion processor so workers can call it
+	workers.SetProcessFunc(service.ProcessIngestionJob)
 	workers.Start()
 
-	service := NewService(db, workers)
 	controller := NewController(service)
 	router.POST("/process", controller.Process)
 }

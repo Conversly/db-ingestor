@@ -23,8 +23,12 @@ func NewService(db *loaders.PostgresClient, workers *WorkerPool) *Service {
 	return &Service{db: db, workers: workers}
 }
 
+// Process enqueues the request for background processing and returns immediately
 func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types.ProcessResponse, error) {
-	utils.Zlog.Info("Processing data sources",
+	jobID := uuid.New().String()
+
+	utils.Zlog.Info("Enqueueing ingestion job",
+		zap.String("jobId", jobID),
 		zap.String("userId", req.UserID),
 		zap.String("chatbotId", req.ChatbotID),
 		zap.Int("websites", len(req.WebsiteURLs)),
@@ -32,25 +36,39 @@ func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types
 		zap.Int("documents", len(req.Documents)),
 		zap.Int("textContent", len(req.TextContent)))
 
-	// Validation method should be implemented in types package or here
-	// if err := req.Validate(); err != nil {
-	// 	return nil, fmt.Errorf("validation failed: %w", err)
-	// }
-
-	jobID := uuid.New().String()
-
-	record := &types.IngestionRecord{
-		ID:               jobID,
-		UserID:           req.UserID,
-		ChatbotID:        req.ChatbotID,
-		Status:           types.StatusProcessing,
-		TotalSources:     s.calculateTotalSources(req),
-		ProcessedSources: 0,
-		FailedSources:    0,
-		TotalChunks:      0,
-		CreatedAt:        time.Now().UTC(),
-		UpdatedAt:        time.Now().UTC(),
+	job := IngestionJob{
+		JobID:   jobID,
+		Request: req,
 	}
+
+	if ok := s.workers.EnqueueIngestion(job); !ok {
+		return nil, fmt.Errorf("ingestion queue is full, try again later")
+	}
+
+	response := &types.ProcessResponse{
+		JobID:        jobID,
+		Status:       types.StatusProcessing,
+		Message:      "Job queued for processing",
+		TotalSources: s.calculateTotalSources(req),
+		Timestamp:    time.Now().UTC(),
+	}
+
+	return response, nil
+}
+
+// ProcessIngestionJob processes an ingestion job in the background (called by workers)
+func (s *Service) ProcessIngestionJob(ctx context.Context, job IngestionJob) {
+	req := job.Request
+	jobID := job.JobID
+
+	utils.Zlog.Info("Processing ingestion job",
+		zap.String("jobId", jobID),
+		zap.String("userId", req.UserID),
+		zap.String("chatbotId", req.ChatbotID),
+		zap.Int("websites", len(req.WebsiteURLs)),
+		zap.Int("qanda", len(req.QandAData)),
+		zap.Int("documents", len(req.Documents)),
+		zap.Int("textContent", len(req.TextContent)))
 
 	results, totalChunks, allChunks := s.processAllSources(ctx, req, jobID)
 
@@ -64,21 +82,14 @@ func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types
 		}
 	}
 
-	record.ProcessedSources = successful
-	record.FailedSources = failed
-	record.TotalChunks = totalChunks
-
+	var status types.ProcessStatus
 	if failed == 0 {
-		record.Status = types.StatusCompleted
+		status = types.StatusCompleted
 	} else if successful == 0 {
-		record.Status = types.StatusFailed
+		status = types.StatusFailed
 	} else {
-		record.Status = types.StatusPartial
+		status = types.StatusPartial
 	}
-
-	completedAt := time.Now().UTC()
-	record.CompletedAt = &completedAt
-	record.UpdatedAt = completedAt
 
 	if s.workers != nil && len(allChunks) > 0 {
 		// Group chunks by datasourceID for parallel processing
@@ -91,16 +102,16 @@ func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types
 		enqueuedJobs := 0
 		droppedJobs := 0
 		for datasourceID, chunks := range chunksByDatasource {
-			job := EmbeddingJob{
+			embJob := EmbeddingJob{
 				JobID:     fmt.Sprintf("%s-ds-%s", jobID, datasourceID),
 				UserID:    req.UserID,
 				ChatbotID: req.ChatbotID,
 				Chunks:    chunks,
 				CreatedAt: time.Now().UTC(),
 			}
-			if ok := s.workers.Enqueue(job); !ok {
+			if ok := s.workers.Enqueue(embJob); !ok {
 				utils.Zlog.Warn("Embedding queue is full; dropping job",
-					zap.String("jobId", job.JobID),
+					zap.String("jobId", embJob.JobID),
 					zap.String("datasourceId", datasourceID),
 					zap.Int("chunks", len(chunks)))
 				droppedJobs++
@@ -117,25 +128,12 @@ func (s *Service) Process(ctx context.Context, req types.ProcessRequest) (*types
 			zap.Int("totalChunks", len(allChunks)))
 	}
 
-	response := &types.ProcessResponse{
-		JobID:            jobID,
-		Status:           record.Status,
-		Message:          s.generateResponseMessage(successful, failed),
-		TotalSources:     record.TotalSources,
-		ProcessedSources: successful,
-		FailedSources:    failed,
-		TotalChunks:      totalChunks,
-		Results:          results,
-		Timestamp:        time.Now().UTC(),
-	}
-
-	utils.Zlog.Info("Processing completed",
+	utils.Zlog.Info("Ingestion job completed",
 		zap.String("jobId", jobID),
-		zap.String("status", string(record.Status)),
+		zap.String("status", string(status)),
 		zap.Int("successful", successful),
-		zap.Int("failed", failed))
-
-	return response, nil
+		zap.Int("failed", failed),
+		zap.Int("totalChunks", totalChunks))
 }
 
 func (s *Service) processAllSources(ctx context.Context, req types.ProcessRequest, jobID string) ([]types.SourceResult, int, []types.ContentChunk) {
