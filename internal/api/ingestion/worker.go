@@ -64,6 +64,7 @@ func (wp *WorkerPool) Start() {
 				case job := <-wp.jobs:
 					wp.processEmbeddingJob(workerID, job)
 				}
+
 			}
 		}(i + 1)
 	}
@@ -182,7 +183,7 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) error {
 	// Prepare embedding data for insertion
 	var embeddingData []loaders.EmbeddingData
-	dataSourceIDsMap := make(map[int]bool)
+	dataSourceIDsMap := make(map[string]bool)
 
 	for _, chunk := range job.Chunks {
 		if len(chunk.Embedding) == 0 {
@@ -195,8 +196,8 @@ func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) e
 			citation = &citationVal
 		}
 
-		var dataSourceID *int
-		if chunk.DatasourceID > 0 {
+		var dataSourceID *string
+		if chunk.DatasourceID != "" {
 			dataSourceID = &chunk.DatasourceID
 			dataSourceIDsMap[chunk.DatasourceID] = true
 		}
@@ -220,7 +221,7 @@ func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) e
 
 	// Update data source status to COMPLETED
 	if len(dataSourceIDsMap) > 0 {
-		var dataSourceIDs []int
+		var dataSourceIDs []string
 		for id := range dataSourceIDsMap {
 			dataSourceIDs = append(dataSourceIDs, id)
 		}

@@ -138,7 +138,7 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 			chunk.Citation,
 		)
 		if err != nil {
-			log.Printf("Failed to insert embedding for data_source_id=%d: %v", chunk.DataSourceID, err)
+			log.Printf("Failed to insert embedding for data_source_id=%v: %v", chunk.DataSourceID, err)
 			continue
 		}
 		successCount++
@@ -157,7 +157,7 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 }
 
 // UpdateDataSourceStatus updates the status of data sources to COMPLETED
-func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceIDs []int, status string) error {
+func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceIDs []string, status string) error {
 	if len(dataSourceIDs) == 0 {
 		return nil
 	}
@@ -194,6 +194,6 @@ type EmbeddingData struct {
 	Topic        string
 	Text         string
 	Vector       []float32
-	DataSourceID *int
+	DataSourceID *string
 	Citation     *string
 }

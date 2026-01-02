@@ -21,7 +21,7 @@ type JSONRecord struct {
 	Text         string  `json:"text"`
 	CreatedAt    string  `json:"createdAt"`
 	UpdatedAt    string  `json:"updatedAt"`
-	DataSourceID *int    `json:"dataSourceId"`
+	DataSourceID *string `json:"dataSourceId"`
 	Citation     *string `json:"citation"`
 }
 
@@ -199,7 +199,7 @@ func processRecord(
 		chatbotID = "clxxx-default-chatbot-id" // fallback default cuid2 format
 	}
 
-	dataSourceID := 12
+	dataSourceID := "12"
 
 	logger.Info("Generating embedding",
 		zap.Int("id", record.ID),

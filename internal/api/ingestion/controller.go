@@ -1,6 +1,8 @@
 package ingestion
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -34,8 +36,23 @@ func NewController(service *Service) *Controller {
 func (ctrl *Controller) Process(c *gin.Context) {
 	var req types.ProcessRequest
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Zlog.Error("Invalid request", zap.Error(err))
+	// Read raw body for logging in case of unmarshal failure
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		utils.Zlog.Error("Failed to read request body", zap.Error(err))
+		c.JSON(http.StatusBadRequest, types.ErrorResponse{
+			Error:     "Bad Request",
+			Message:   "Could not read request body",
+			Timestamp: time.Now().UTC(),
+		})
+		return
+	}
+
+	// Unmarshal manually so we can log the raw body on error
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		utils.Zlog.Error("Unmarshal error",
+			zap.Error(err),
+			zap.String("rawBody", string(bodyBytes)))
 		c.JSON(http.StatusBadRequest, types.ErrorResponse{
 			Error:     "Bad Request",
 			Message:   err.Error(),

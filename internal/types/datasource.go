@@ -30,19 +30,19 @@ const (
 // ====== DATA STRUCTURES ======
 
 type WebsiteURL struct {
-	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	DatasourceID string `json:"datasourceId" validate:"required"`
 	URL          string `json:"url" validate:"required,url"`
 }
 
 type QAPair struct {
-	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	DatasourceID string `json:"datasourceId" validate:"required"`
 	Question     string `json:"question" validate:"required"`
 	Answer       string `json:"answer" validate:"required"`
 	Citations    string `json:"citations,omitempty"`
 }
 
 type DocumentMetadata struct {
-	DatasourceID       int    `json:"datasourceId" validate:"required,min=1"`
+	DatasourceID       string `json:"datasourceId" validate:"required"`
 	URL                string `json:"url" validate:"required,url"`
 	DownloadURL        string `json:"downloadUrl" validate:"required,url"`
 	Pathname           string `json:"pathname" validate:"required"`
@@ -51,7 +51,7 @@ type DocumentMetadata struct {
 }
 
 type TextContent struct {
-	DatasourceID int    `json:"datasourceId" validate:"required,min=1"`
+	DatasourceID string `json:"datasourceId" validate:"required"`
 	Content      string `json:"content" validate:"required"`
 }
 
@@ -72,9 +72,8 @@ type ProcessRequest struct {
 	Options     *ProcessingOptions `json:"options,omitempty"`
 }
 
-
 type SourceResult struct {
-	DatasourceID int        `json:"datasourceId,omitempty"`
+	DatasourceID string     `json:"datasourceId,omitempty"`
 	SourceType   SourceType `json:"sourceType"`
 	Source       string     `json:"source"`
 	Status       string     `json:"status"`

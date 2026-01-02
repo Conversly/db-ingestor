@@ -21,7 +21,7 @@ type ProcessedContent struct {
 }
 
 type ContentChunk struct {
-	DatasourceID int                    `json:"datasourceId,omitempty"`
+	DatasourceID string                 `json:"datasourceId,omitempty"`
 	Content      string                 `json:"content"`
 	Embedding    []float32              `json:"embedding,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
