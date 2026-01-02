@@ -39,6 +39,13 @@ func main() {
 		zap.String("environment", cfg.Environment),
 		zap.String("port", cfg.Port))
 
+	// Determine port
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8070"
+	}
+
+	// Initialize database client
 	db, err := loaders.NewPostgresClient(cfg.DatabaseURL, cfg.WorkerCount, cfg.BatchSize)
 	if err != nil {
 		utils.Zlog.Error("Failed to create database client", zap.Error(err))
@@ -50,16 +57,18 @@ func main() {
 		}
 	}()
 
+	// Set Gin mode
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	// Initialize router and routes
 	router := gin.New()
-
 	routes.SetupRoutes(router, db, cfg)
 
+	// Create and start HTTP server
 	srv := &http.Server{
-		Addr:         "0.0.0.0:" + cfg.Port,
+		Addr:         "0.0.0.0:" + port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -67,13 +76,14 @@ func main() {
 	}
 
 	go func() {
-		utils.Zlog.Info("Starting HTTP server", zap.String("addr", srv.Addr))
+		utils.Zlog.Info("Ingestor listening on", zap.String("port", port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			utils.Zlog.Error("Failed to start server", zap.Error(err))
 			os.Exit(1)
 		}
 	}()
 
+	// Wait for interruption signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
