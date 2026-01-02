@@ -13,12 +13,15 @@ import (
 )
 
 type EmbeddingJob struct {
-	JobID     string
-	UserID    string
-	ChatbotID string
-	Chunks    []types.ContentChunk
-	CreatedAt time.Time
+	JobID      string
+	UserID     string
+	ChatbotID  string
+	Chunks     []types.ContentChunk
+	CreatedAt  time.Time
+	RetryCount int // Track retry attempts to prevent infinite loops
 }
+
+const maxEmbeddingRetries = 3
 
 type IngestionJob struct {
 	JobID   string
@@ -138,7 +141,8 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 		zap.Int("workerId", workerID),
 		zap.String("jobId", job.JobID),
 		zap.String("chatbotId", job.ChatbotID),
-		zap.Int("chunks", len(job.Chunks)))
+		zap.Int("chunks", len(job.Chunks)),
+		zap.Int("retryCount", job.RetryCount))
 
 	if wp.embedder == nil {
 		utils.Zlog.Warn("Embedder not configured, skipping embedding generation",
@@ -150,35 +154,36 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	successCount := 0
-	failCount := 0
+	var successfulChunks []types.ContentChunk
+	var failedChunks []types.ContentChunk
 
 	// Generate embeddings for all chunks
 	for i := range job.Chunks {
 		embedding, err := wp.embedder.EmbedText(ctx, job.Chunks[i].Content)
-		utils.Zlog.Info("Embedding generated",
-			zap.Int("workerId", workerID),
-			zap.String("jobId", job.JobID),
-			zap.Int("chunkIndex", job.Chunks[i].ChunkIndex),
-			zap.Int("embeddingLength", len(embedding)))
 		if err != nil {
 			utils.Zlog.Error("Failed to generate embedding",
 				zap.Int("workerId", workerID),
 				zap.String("jobId", job.JobID),
 				zap.Int("chunkIndex", job.Chunks[i].ChunkIndex),
 				zap.Error(err))
-			failCount++
+			failedChunks = append(failedChunks, job.Chunks[i])
 			continue
 		}
 
-		job.Chunks[i].Embedding = embedding
-		successCount++
+		utils.Zlog.Debug("Embedding generated",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", job.JobID),
+			zap.Int("chunkIndex", job.Chunks[i].ChunkIndex),
+			zap.Int("embeddingLength", len(embedding)))
 
-		if (i+1)%10 == 0 {
+		job.Chunks[i].Embedding = embedding
+		successfulChunks = append(successfulChunks, job.Chunks[i])
+
+		if (len(successfulChunks)+len(failedChunks))%10 == 0 {
 			utils.Zlog.Info("Embedding progress",
 				zap.Int("workerId", workerID),
 				zap.String("jobId", job.JobID),
-				zap.Int("processed", i+1),
+				zap.Int("processed", len(successfulChunks)+len(failedChunks)),
 				zap.Int("total", len(job.Chunks)))
 		}
 	}
@@ -188,29 +193,137 @@ func (wp *WorkerPool) processEmbeddingJob(workerID int, job EmbeddingJob) {
 		zap.Int("workerId", workerID),
 		zap.String("jobId", job.JobID),
 		zap.String("chatbotId", job.ChatbotID),
-		zap.Int("successful", successCount),
-		zap.Int("failed", failCount),
+		zap.Int("successful", len(successfulChunks)),
+		zap.Int("failed", len(failedChunks)),
 		zap.Duration("duration", duration))
 
-	// Persist embeddings to database
-	if wp.db != nil && successCount > 0 {
-		if err := wp.persistEmbeddings(ctx, job); err != nil {
+	// Persist successful embeddings to database
+	if wp.db != nil && len(successfulChunks) > 0 {
+		// Create a job copy with only successful chunks for persistence
+		successJob := EmbeddingJob{
+			JobID:     job.JobID,
+			UserID:    job.UserID,
+			ChatbotID: job.ChatbotID,
+			Chunks:    successfulChunks,
+		}
+
+		// Only mark COMPLETED if there are no failed chunks to retry
+		markCompleted := len(failedChunks) == 0
+
+		if err := wp.persistEmbeddingsWithStatus(ctx, successJob, markCompleted); err != nil {
 			utils.Zlog.Error("Failed to persist embeddings to database",
 				zap.Int("workerId", workerID),
 				zap.String("jobId", job.JobID),
 				zap.Error(err))
+			// Requeue entire job on persist failure
+			wp.requeueFailedChunks(workerID, job, job.Chunks)
 			return
 		}
 
 		utils.Zlog.Info("Successfully persisted embeddings to database",
 			zap.Int("workerId", workerID),
 			zap.String("jobId", job.JobID),
-			zap.Int("embeddingsCount", successCount))
+			zap.Int("embeddingsCount", len(successfulChunks)),
+			zap.Bool("markedCompleted", markCompleted))
+	}
+
+	// Requeue failed chunks for retry
+	if len(failedChunks) > 0 {
+		wp.requeueFailedChunks(workerID, job, failedChunks)
 	}
 }
 
-// persistEmbeddings saves embeddings to the database and updates data source status
+// requeueFailedChunks requeues failed chunks for retry
+func (wp *WorkerPool) requeueFailedChunks(workerID int, originalJob EmbeddingJob, failedChunks []types.ContentChunk) {
+	if originalJob.RetryCount >= maxEmbeddingRetries {
+		utils.Zlog.Error("Max retries exceeded for embedding job, marking datasources as FAILED",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", originalJob.JobID),
+			zap.Int("failedChunks", len(failedChunks)),
+			zap.Int("retryCount", originalJob.RetryCount))
+
+		// Mark affected datasources as FAILED
+		if wp.db != nil {
+			datasourceIDs := make(map[string]bool)
+			for _, chunk := range failedChunks {
+				if chunk.DatasourceID != "" {
+					datasourceIDs[chunk.DatasourceID] = true
+				}
+			}
+			if len(datasourceIDs) > 0 {
+				ids := make([]string, 0, len(datasourceIDs))
+				for id := range datasourceIDs {
+					ids = append(ids, id)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := wp.db.UpdateDataSourceStatus(ctx, ids, "FAILED"); err != nil {
+					utils.Zlog.Error("Failed to update datasource status to FAILED",
+						zap.String("jobId", originalJob.JobID),
+						zap.Error(err))
+				} else {
+					utils.Zlog.Info("Marked datasources as FAILED after max retries",
+						zap.String("jobId", originalJob.JobID),
+						zap.Int("datasourceCount", len(ids)))
+				}
+			}
+		}
+		return
+	}
+
+	retryJob := EmbeddingJob{
+		JobID:      originalJob.JobID + "-retry",
+		UserID:     originalJob.UserID,
+		ChatbotID:  originalJob.ChatbotID,
+		Chunks:     failedChunks,
+		CreatedAt:  time.Now().UTC(),
+		RetryCount: originalJob.RetryCount + 1,
+	}
+
+	if ok := wp.Enqueue(retryJob); !ok {
+		utils.Zlog.Error("Failed to requeue embedding job (queue full), marking datasources as FAILED",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", retryJob.JobID),
+			zap.Int("failedChunks", len(failedChunks)))
+
+		// Mark affected datasources as FAILED since we can't retry
+		if wp.db != nil {
+			datasourceIDs := make(map[string]bool)
+			for _, chunk := range failedChunks {
+				if chunk.DatasourceID != "" {
+					datasourceIDs[chunk.DatasourceID] = true
+				}
+			}
+			if len(datasourceIDs) > 0 {
+				ids := make([]string, 0, len(datasourceIDs))
+				for id := range datasourceIDs {
+					ids = append(ids, id)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := wp.db.UpdateDataSourceStatus(ctx, ids, "FAILED"); err != nil {
+					utils.Zlog.Error("Failed to update datasource status to FAILED",
+						zap.String("jobId", originalJob.JobID),
+						zap.Error(err))
+				}
+			}
+		}
+	} else {
+		utils.Zlog.Info("Requeued failed chunks for retry",
+			zap.Int("workerId", workerID),
+			zap.String("jobId", retryJob.JobID),
+			zap.Int("chunks", len(failedChunks)),
+			zap.Int("retryCount", retryJob.RetryCount))
+	}
+}
+
+// persistEmbeddings saves embeddings to the database and optionally updates data source status
 func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) error {
+	return wp.persistEmbeddingsWithStatus(ctx, job, true)
+}
+
+// persistEmbeddingsWithStatus saves embeddings and optionally marks datasources as COMPLETED
+func (wp *WorkerPool) persistEmbeddingsWithStatus(ctx context.Context, job EmbeddingJob, markCompleted bool) error {
 	// Prepare embedding data for insertion
 	var embeddingData []loaders.EmbeddingData
 	dataSourceIDsMap := make(map[string]bool)
@@ -249,8 +362,8 @@ func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) e
 		return err
 	}
 
-	// Update data source status to COMPLETED
-	if len(dataSourceIDsMap) > 0 {
+	// Update data source status to COMPLETED only if all chunks succeeded
+	if markCompleted && len(dataSourceIDsMap) > 0 {
 		var dataSourceIDs []string
 		for id := range dataSourceIDsMap {
 			dataSourceIDs = append(dataSourceIDs, id)
@@ -270,3 +383,13 @@ func (wp *WorkerPool) persistEmbeddings(ctx context.Context, job EmbeddingJob) e
 
 	return nil
 }
+
+// service.go - Mark FAILED on chunking/download failures:
+// When processSource fails → marks datasource as FAILED in DB
+// When document download fails → marks datasource as FAILED in DB
+// worker.go - Requeue failed embeddings:
+// Added RetryCount field to EmbeddingJob (max 3 retries)
+// Failed chunks get requeued instead of being dropped
+// Only marks datasource COMPLETED when ALL chunks succeed
+// After max retries exhausted → marks datasource as FAILED
+// If queue full during requeue → marks datasource as FAILED

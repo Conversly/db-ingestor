@@ -208,7 +208,20 @@ func (s *Service) processAllSources(ctx context.Context, req types.ProcessReques
 			if err != nil {
 				utils.Zlog.Error("Failed to download document",
 					zap.String("url", doc.DownloadURL),
+					zap.String("datasourceId", doc.DatasourceID),
 					zap.Error(err))
+
+				// Mark datasource as FAILED in database
+				if s.db != nil && doc.DatasourceID != "" {
+					if dbErr := s.db.UpdateDataSourceStatus(ctx, []string{doc.DatasourceID}, "FAILED"); dbErr != nil {
+						utils.Zlog.Error("Failed to update datasource status to FAILED",
+							zap.String("datasourceId", doc.DatasourceID),
+							zap.Error(dbErr))
+					} else {
+						utils.Zlog.Info("Marked datasource as FAILED",
+							zap.String("datasourceId", doc.DatasourceID))
+					}
+				}
 
 				mu.Lock()
 				results = append(results, types.SourceResult{
@@ -275,7 +288,21 @@ func (s *Service) processSource(ctx context.Context, processor types.Processor, 
 	if err != nil {
 		utils.Zlog.Error("Failed to process source",
 			zap.String("source", source),
+			zap.String("datasourceId", datasourceID),
 			zap.Error(err))
+
+		// Mark datasource as FAILED in database
+		if s.db != nil && datasourceID != "" {
+			if dbErr := s.db.UpdateDataSourceStatus(ctx, []string{datasourceID}, "FAILED"); dbErr != nil {
+				utils.Zlog.Error("Failed to update datasource status to FAILED",
+					zap.String("datasourceId", datasourceID),
+					zap.Error(dbErr))
+			} else {
+				utils.Zlog.Info("Marked datasource as FAILED",
+					zap.String("datasourceId", datasourceID))
+			}
+		}
+
 		return types.SourceResult{
 			DatasourceID: datasourceID,
 			SourceType:   processor.GetSourceType(),
